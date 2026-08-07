@@ -8,7 +8,7 @@ const SteamStrategy = require("passport-steam").Strategy;
 const redis = require("redis");
 
 // ===== ПРАВИЛЬНЫЙ ИМПОРТ ДЛЯ connect-redis@7 =====
-const RedisStore = require("connect-redis")(session);
+const RedisStore = require("connect-redis");
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
