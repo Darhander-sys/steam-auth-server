@@ -15,15 +15,15 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN;
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 console.log('🔍 Проверка переменных:');
-console.log('STEAM_API_KEY:', process.env.STEAM_API_KEY ? '✅ ЕСТЬ' : '❌ НЕТ');
-console.log('SESSION_SECRET:', process.env.SESSION_SECRET ? '✅ ЕСТЬ' : '❌ НЕТ');
+console.log('STEAM_API_KEY:', STEAM_API_KEY ? '✅ ЕСТЬ' : '❌ НЕТ');
+console.log('SESSION_SECRET:', SESSION_SECRET ? '✅ ЕСТЬ' : '❌ НЕТ');
 console.log('FRONTEND_URL:', FRONTEND_URL);
+console.log('IS_PRODUCTION:', IS_PRODUCTION);
 
 if (!STEAM_API_KEY) {
     console.error("❌ Missing STEAM_API_KEY.");
     process.exit(1);
 }
-
 if (!SESSION_SECRET) {
     console.error("❌ Missing SESSION_SECRET.");
     process.exit(1);
@@ -41,7 +41,7 @@ if (CORS_ORIGIN) {
 
 app.use(express.json());
 
-// ===== СЕССИИ (БЕЗ REDIS) =====
+// ===== СЕССИИ =====
 app.use(
     session({
         secret: SESSION_SECRET,
@@ -50,7 +50,8 @@ app.use(
         cookie: {
             httpOnly: true,
             sameSite: "lax",
-            secure: IS_PRODUCTION,
+            // ВАЖНО: secure: false для разработки, true для продакшена с HTTPS
+            secure: false,  // ← ИЗМЕНЕНО: всегда false для теста
             maxAge: 1000 * 60 * 60 * 24 * 7,
         },
     })
@@ -103,90 +104,17 @@ passport.deserializeUser((user, done) => {
 
 app.get("/api/auth/steam", passport.authenticate("steam", { failureRedirect: "/" }));
 
+// ===== ИСПРАВЛЕННЫЙ МАРШРУТ ВОЗВРАТА =====
 app.get(
     "/api/auth/steam/return",
-    passport.authenticate("steam", { failureRedirect: "/" }),
-    (req, res) => {
-        // Отправляем HTML-страницу вместо редиректа
-        res.send(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Авторизация успешна</title>
-                <meta charset="utf-8">
-                <style>
-                    body {
-                        background: #f0f2f5;
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        height: 100vh;
-                        margin: 0;
-                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                    }
-                    .card {
-                        background: white;
-                        padding: 40px;
-                        border-radius: 16px;
-                        box-shadow: 0 10px 25px rgba(0,0,0,0.08);
-                        text-align: center;
-                        max-width: 380px;
-                        width: 90%;
-                    }
-                    .icon {
-                        font-size: 64px;
-                        margin-bottom: 15px;
-                        display: block;
-                    }
-                    h2 {
-                        color: #1a1a1a;
-                        margin: 0 0 10px 0;
-                        font-size: 24px;
-                    }
-                    p {
-                        color: #666;
-                        margin: 0 0 30px 0;
-                        font-size: 16px;
-                    }
-                    .btn {
-                        display: inline-block;
-                        background: #4CAF50;
-                        color: white;
-                        padding: 14px 32px;
-                        border-radius: 8px;
-                        text-decoration: none;
-                        font-weight: 600;
-                        font-size: 16px;
-                        transition: background 0.2s;
-                    }
-                    .btn:hover {
-                        background: #45a049;
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="card">
-                    <span class="icon">✅</span>
-                    <h2>Вход выполнен!</h2>
-                    <p>Вы вошли как <strong>${req.user?.name || 'Steam User'}</strong>.<br>Теперь вы можете вернуться на сайт.</p>
-                    <a href="${FRONTEND_URL}" class="btn">Вернуться на сайт</a>
-                </div>
-                <script>
-                    setTimeout(() => {
-                        try {
-                            if (window.opener && !window.opener.closed) {
-                                window.close();
-                            }
-                        } catch (e) {}
-                    }, 3000);
-                </script>
-            </body>
-            </html>
-        `);
-    }
+    passport.authenticate("steam", { 
+        failureRedirect: "/",
+        successRedirect: FRONTEND_URL,  // ← ПРЯМОЙ РЕДИРЕКТ НА ВАШ САЙТ
+    })
 );
 
 app.get("/api/auth/me", (req, res) => {
+    console.log('🔍 Проверка пользователя:', req.isAuthenticated?.());
     if (!req.isAuthenticated || !req.isAuthenticated()) {
         return res.status(401).json({ error: "Unauthorized" });
     }
@@ -204,7 +132,7 @@ function logoutHandler(req, res, next) {
             res.clearCookie(cookieName, {
                 httpOnly: true,
                 sameSite: "lax",
-                secure: IS_PRODUCTION,
+                secure: false,
             });
             return res.json({ success: true });
         });
@@ -223,7 +151,7 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, _next) => {
-    console.error("Server error:", err);
+    console.error("❌ Server error:", err);
     if (res.headersSent) return;
     res.status(500).json({ error: "Internal server error" });
 });
