@@ -6,7 +6,9 @@ const session = require("express-session")
 const passport = require("passport")
 const SteamStrategy = require("passport-steam").Strategy
 const redis = require("redis");
-const RedisStore = require("connect-redis")(session);
+
+// ИЗМЕНЕНИЕ: Импортируем библиотеку без вызова функции (так надежнее)
+const RedisStore = require("connect-redis");
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000"
@@ -35,16 +37,18 @@ if (!SESSION_SECRET) {
     process.exit(1)
 }
 
+// ИЗМЕНЕНИЕ: Создаем клиента Redis
 const redisClient = redis.createClient({
   url: process.env.REDIS_URL
 });
 
-// ОБЯЗАТЕЛЬНО добавляем эту строку для обработки ошибок соединения
+// Обязательная обработка ошибок для Node.js v22
 redisClient.on('error', (err) => console.log('Redis Client Error', err));
 
 redisClient.connect().catch((err) => {
     console.error("❌ Redis connection failed:", err.message);
 });
+
 const app = express()
 
 if (CORS_ORIGIN) {
@@ -59,9 +63,10 @@ if (CORS_ORIGIN) {
 
 app.use(express.json())
 
+// ИЗМЕНЕНИЕ: Вызываем RedisStore как функцию, убираем "new"
 app.use(
     session({
-        store: new RedisStore({ client: redisClient }),
+        store: RedisStore({ client: redisClient }), 
         secret: SESSION_SECRET,
         resave: false,
         saveUninitialized: false,
