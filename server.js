@@ -13,9 +13,12 @@ const STEAM_API_KEY = process.env.STEAM_API_KEY;
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
 const SESSION_SECRET = process.env.SESSION_SECRET;
 const PORT = Number(process.env.PORT || 3000);
-const FRONTEND_URL = process.env.FRONTEND_URL || "/";
-const CORS_ORIGIN = process.env.CORS_ORIGIN;
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:5173";
 const DATABASE_URL = process.env.DATABASE_URL;
+
+// Определяем окружение
+const isProduction = process.env.NODE_ENV === 'production';
 
 console.log('🔍 Проверка переменных:');
 console.log('STEAM_API_KEY:', STEAM_API_KEY ? '✅ ЕСТЬ' : '❌ НЕТ');
@@ -23,6 +26,8 @@ console.log('SESSION_SECRET:', SESSION_SECRET ? '✅ ЕСТЬ' : '❌ НЕТ');
 console.log('DATABASE_URL:', DATABASE_URL ? '✅ ЕСТЬ' : '❌ НЕТ');
 console.log('FRONTEND_URL:', FRONTEND_URL);
 console.log('CORS_ORIGIN:', CORS_ORIGIN);
+console.log('NODE_ENV:', process.env.NODE_ENV || 'development');
+console.log('isProduction:', isProduction);
 
 if (!STEAM_API_KEY) {
     console.error("❌ Missing STEAM_API_KEY.");
@@ -39,10 +44,35 @@ if (!DATABASE_URL) {
 
 const app = express();
 
+// ===== ЛОГИРОВАНИЕ ВСЕХ ЗАПРОСОВ =====
+app.use((req, res, next) => {
+    console.log(`📥 ${req.method} ${req.path}`);
+    console.log(`  - Origin: ${req.headers.origin || 'нет'}`);
+    console.log(`  - Cookie: ${req.headers.cookie ? '✅ есть' : '❌ нет'}`);
+    next();
+});
+
 // ===== CORS =====
 app.use(cors({
     origin: function (origin, callback) {
-        if (!origin || origin.includes('framer.app') || origin.includes('localhost')) {
+        // Разрешаем запросы без origin (например, из Postman)
+        if (!origin) {
+            return callback(null, true);
+        }
+        
+        // Список разрешённых доменов
+        const allowedOrigins = [
+            FRONTEND_URL,
+            CORS_ORIGIN,
+            'http://localhost:5173',
+            'http://localhost:3000',
+            'http://localhost:3001',
+            'https://adored-monstera-794345.framer.app',
+        ];
+        
+        // Разрешаем все домены на framer.app и railway.app
+        if (origin.includes('framer.app') || origin.includes('railway.app') || allowedOrigins.includes(origin)) {
+            console.log('✅ CORS разрешён для:', origin);
             callback(null, true);
         } else {
             console.log('❌ Заблокирован CORS запрос с:', origin);
@@ -99,10 +129,10 @@ const sessionMiddleware = session({
     saveUninitialized: false,
     cookie: {
         httpOnly: true,
-        sameSite: "none",
-        secure: true,
-        domain: ".railway.app",
-        maxAge: 1000 * 60 * 60 * 24 * 7,
+        sameSite: "none",  // Важно для разных доменов
+        secure: true,       // Важно для HTTPS
+        domain: ".railway.app",  // Точка в начале важна!
+        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 дней
     },
 });
 
@@ -145,18 +175,16 @@ passport.use(
     )
 );
 
-// ===== ИСПРАВЛЕННАЯ СЕРИАЛИЗАЦИЯ =====
+// ===== СЕРИАЛИЗАЦИЯ =====
 passport.serializeUser((user, done) => {
     console.log('🔍 Сериализация пользователя с ID:', user.id);
-    // Сохраняем в сессию только ID
     done(null, user.id);
 });
 
 passport.deserializeUser(async (id, done) => {
     console.log('🔍 Десериализация пользователя с ID:', id);
     try {
-        // Здесь нужно получить пользователя из БД
-        // Пока создаём заглушку
+        // TODO: Здесь нужно получить пользователя из БД
         const user = {
             id: id,
             name: 'Steam User',
@@ -181,27 +209,37 @@ app.get(
     "/api/auth/steam/return",
     passport.authenticate("steam", { failureRedirect: "/" }),
     (req, res) => {
-        console.log('✅ Успешный вход! Пользователь:', req.user?.name);
-        console.log('✅ User ID:', req.user?.id);
+        console.log('✅ Успешный вход!');
+        console.log('  - User:', req.user?.name);
+        console.log('  - ID:', req.user?.id);
+        console.log('  - Session ID:', req.session.id);
         
+        // Сохраняем сессию и редиректим
         req.session.save((err) => {
             if (err) {
                 console.error('❌ Ошибка сохранения сессии:', err);
+                return res.redirect(FRONTEND_URL + '?error=session_error');
             }
-            console.log('🔍 Сессия сохранена, ID:', req.session.id);
+            
+            console.log('✅ Сессия сохранена, редирект на:', FRONTEND_URL);
+            // Редиректим на FRONTEND_URL (ваш Framer сайт)
             res.redirect(FRONTEND_URL);
         });
     }
 );
 
 app.get("/api/auth/me", (req, res) => {
-    console.log('🔍 Проверка аутентификации:', req.isAuthenticated?.());
-    console.log('🔍 Сессия ID:', req.session?.id);
-    console.log('🔍 Пользователь:', req.user);
+    console.log('🔍 Проверка аутентификации:');
+    console.log('  - isAuthenticated:', req.isAuthenticated?.());
+    console.log('  - Сессия ID:', req.session?.id);
+    console.log('  - Пользователь:', req.user?.id || 'нет');
+    console.log('  - Cookie:', req.headers.cookie || 'нет');
     
     if (!req.isAuthenticated || !req.isAuthenticated()) {
+        console.log('❌ Пользователь не авторизован');
         return res.status(401).json({ error: "Unauthorized" });
     }
+    console.log('✅ Пользователь авторизован:', req.user.name);
     return res.json(req.user);
 });
 
@@ -253,6 +291,8 @@ async function startServer() {
             console.log(`✅ Steam auth server listening on ${BASE_URL} (port ${PORT})`);
             console.log(`🔗 Steam login: ${BASE_URL}/api/auth/steam`);
             console.log(`🏥 Health check: ${BASE_URL}/api/health`);
+            console.log(`🌐 Режим: ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}`);
+            console.log(`🔗 Фронтенд: ${FRONTEND_URL}`);
         });
     } catch (error) {
         console.error('❌ Критическая ошибка:', error);
