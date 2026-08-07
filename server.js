@@ -7,8 +7,8 @@ const passport = require("passport");
 const SteamStrategy = require("passport-steam").Strategy;
 const redis = require("redis");
 
-// ===== ПРАВИЛЬНЫЙ ИМПОРТ RedisStore =====
-const RedisStore = require("connect-redis");
+// ===== ПРАВИЛЬНЫЙ ИМПОРТ ДЛЯ connect-redis@7 =====
+const RedisStore = require("connect-redis")(session);
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
@@ -58,7 +58,6 @@ redisClient.on('connect', () => console.log('✅ Redis подключен'));
 // ===== НАСТРОЙКА СЕССИЙ (ДО PASSPORT!) =====
 app.use(
     session({
-        // ===== ПРАВИЛЬНОЕ ИСПОЛЬЗОВАНИЕ RedisStore =====
         store: new RedisStore({ client: redisClient }),
         secret: SESSION_SECRET,
         resave: false,
