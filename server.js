@@ -55,12 +55,10 @@ app.use((req, res, next) => {
 // ===== CORS =====
 app.use(cors({
     origin: function (origin, callback) {
-        // Разрешаем запросы без origin (например, из Postman)
         if (!origin) {
             return callback(null, true);
         }
         
-        // Список разрешённых доменов
         const allowedOrigins = [
             FRONTEND_URL,
             CORS_ORIGIN,
@@ -70,7 +68,6 @@ app.use(cors({
             'https://adored-monstera-794345.framer.app',
         ];
         
-        // Разрешаем все домены на framer.app и railway.app
         if (origin.includes('framer.app') || origin.includes('railway.app') || allowedOrigins.includes(origin)) {
             console.log('✅ CORS разрешён для:', origin);
             callback(null, true);
@@ -94,6 +91,26 @@ const pool = new Pool({
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 2000,
 });
+
+// ===== СОЗДАНИЕ ТАБЛИЦЫ ПОЛЬЗОВАТЕЛЕЙ =====
+async function createUsersTable() {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id VARCHAR(255) PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                avatar VARCHAR(500),
+                balance INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('✅ Таблица users создана или уже существует');
+    } catch (error) {
+        console.error('❌ Ошибка создания таблицы users:', error.message);
+        throw error;
+    }
+}
 
 const pgSession = connectPgSimple(session);
 
@@ -129,10 +146,10 @@ const sessionMiddleware = session({
     saveUninitialized: false,
     cookie: {
         httpOnly: true,
-        sameSite: "none",  // Важно для разных доменов
-        secure: true,       // Важно для HTTPS
-        domain: ".railway.app",  // Точка в начале важна!
-        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 дней
+        sameSite: "none",
+        secure: true,
+        domain: ".railway.app",
+        maxAge: 1000 * 60 * 60 * 24 * 7,
     },
 });
 
@@ -152,7 +169,7 @@ function normalizeSteamUser(profile) {
     return {
         id: String(profile?.id || ""),
         name: String(profile?.displayName || "Steam User"),
-        avatar,
+        avatar: avatar || "",
         balance: 0,
     };
 }
@@ -164,11 +181,28 @@ passport.use(
             realm: BASE_URL,
             apiKey: STEAM_API_KEY,
         },
-        function verify(identifier, profile, done) {
+        async function verify(identifier, profile, done) {
             try {
-                const user = normalizeSteamUser(profile);
-                return done(null, user);
+                const userData = normalizeSteamUser(profile);
+                console.log('🔍 Получен пользователь от Steam:', userData.id);
+                
+                // Сохраняем или обновляем пользователя в БД
+                await pool.query(
+                    `INSERT INTO users (id, name, avatar, balance, updated_at)
+                     VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+                     ON CONFLICT (id) 
+                     DO UPDATE SET 
+                         name = EXCLUDED.name,
+                         avatar = EXCLUDED.avatar,
+                         updated_at = CURRENT_TIMESTAMP
+                     RETURNING *`,
+                    [userData.id, userData.name, userData.avatar, userData.balance]
+                );
+                
+                console.log('✅ Пользователь сохранён в БД:', userData.id);
+                return done(null, userData);
             } catch (error) {
+                console.error('❌ Ошибка сохранения пользователя:', error);
                 return done(error);
             }
         }
@@ -184,13 +218,18 @@ passport.serializeUser((user, done) => {
 passport.deserializeUser(async (id, done) => {
     console.log('🔍 Десериализация пользователя с ID:', id);
     try {
-        // TODO: Здесь нужно получить пользователя из БД
-        const user = {
-            id: id,
-            name: 'Steam User',
-            avatar: 'https://avatars.steamstatic.com/...',
-            balance: 0
-        };
+        // Получаем пользователя из БД
+        const result = await pool.query(
+            'SELECT * FROM users WHERE id = $1',
+            [id]
+        );
+        
+        if (result.rows.length === 0) {
+            console.log('❌ Пользователь не найден в БД:', id);
+            return done(null, null);
+        }
+        
+        const user = result.rows[0];
         console.log('✅ Пользователь десериализован:', user.id);
         done(null, user);
     } catch (error) {
@@ -207,40 +246,73 @@ app.get("/api/auth/steam", passport.authenticate("steam", { failureRedirect: "/"
 
 app.get(
     "/api/auth/steam/return",
+    (req, res, next) => {
+        console.log('🔄 Обработка возврата от Steam...');
+        console.log('  - Query:', req.query);
+        next();
+    },
     passport.authenticate("steam", { failureRedirect: "/" }),
-    (req, res) => {
+    async (req, res) => {
         console.log('✅ Успешный вход!');
         console.log('  - User:', req.user?.name);
         console.log('  - ID:', req.user?.id);
         console.log('  - Session ID:', req.session.id);
         
-        // Сохраняем сессию и редиректим
-        req.session.save((err) => {
+        // Проверяем, что сессия действительно сохранилась
+        req.session.save(async (err) => {
             if (err) {
                 console.error('❌ Ошибка сохранения сессии:', err);
                 return res.redirect(FRONTEND_URL + '?error=session_error');
             }
             
-            console.log('✅ Сессия сохранена, редирект на:', FRONTEND_URL);
-            // Редиректим на FRONTEND_URL (ваш Framer сайт)
+            // Дополнительная проверка - сессия должна быть в БД
+            try {
+                const result = await pool.query(
+                    'SELECT * FROM "session" WHERE sid = $1',
+                    [req.session.id]
+                );
+                console.log('✅ Сессия сохранена в БД:', result.rows.length > 0);
+            } catch (error) {
+                console.error('❌ Ошибка проверки сессии в БД:', error);
+            }
+            
+            console.log('✅ Редирект на:', FRONTEND_URL);
             res.redirect(FRONTEND_URL);
         });
     }
 );
 
-app.get("/api/auth/me", (req, res) => {
+app.get("/api/auth/me", async (req, res) => {
     console.log('🔍 Проверка аутентификации:');
     console.log('  - isAuthenticated:', req.isAuthenticated?.());
     console.log('  - Сессия ID:', req.session?.id);
-    console.log('  - Пользователь:', req.user?.id || 'нет');
+    console.log('  - Пользователь в сессии:', req.user?.id || 'нет');
     console.log('  - Cookie:', req.headers.cookie || 'нет');
     
     if (!req.isAuthenticated || !req.isAuthenticated()) {
         console.log('❌ Пользователь не авторизован');
         return res.status(401).json({ error: "Unauthorized" });
     }
-    console.log('✅ Пользователь авторизован:', req.user.name);
-    return res.json(req.user);
+    
+    // Получаем свежие данные из БД
+    try {
+        const result = await pool.query(
+            'SELECT * FROM users WHERE id = $1',
+            [req.user.id]
+        );
+        
+        if (result.rows.length === 0) {
+            console.log('❌ Пользователь не найден в БД');
+            return res.status(401).json({ error: "User not found" });
+        }
+        
+        const user = result.rows[0];
+        console.log('✅ Пользователь авторизован:', user.name);
+        res.json(user);
+    } catch (error) {
+        console.error('❌ Ошибка получения пользователя:', error);
+        res.status(500).json({ error: "Database error" });
+    }
 });
 
 function logoutHandler(req, res, next) {
@@ -268,6 +340,16 @@ app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// ===== ТЕСТОВЫЙ ЭНДПОИНТ ДЛЯ ПРОВЕРКИ СЕССИИ =====
+app.get("/api/auth/check-session", (req, res) => {
+    res.json({
+        sessionId: req.session?.id || 'нет',
+        isAuthenticated: req.isAuthenticated?.() || false,
+        user: req.user || null,
+        cookie: req.headers.cookie || 'нет'
+    });
+});
+
 app.use((req, res) => {
     console.log(`❌ 404: ${req.method} ${req.path}`);
     res.status(404).json({ error: "Not found" });
@@ -286,10 +368,12 @@ app.use((err, req, res, _next) => {
 async function startServer() {
     try {
         await createSessionTable();
+        await createUsersTable();
 
         app.listen(PORT, () => {
             console.log(`✅ Steam auth server listening on ${BASE_URL} (port ${PORT})`);
             console.log(`🔗 Steam login: ${BASE_URL}/api/auth/steam`);
+            console.log(`🔗 Session check: ${BASE_URL}/api/auth/check-session`);
             console.log(`🏥 Health check: ${BASE_URL}/api/health`);
             console.log(`🌐 Режим: ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}`);
             console.log(`🔗 Фронтенд: ${FRONTEND_URL}`);
