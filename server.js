@@ -5,6 +5,8 @@ const express = require("express");
 const session = require("express-session");
 const passport = require("passport");
 const SteamStrategy = require("passport-steam").Strategy;
+const pg = require("pg");
+const connectPgSimple = require("connect-pg-simple");
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
@@ -12,13 +14,14 @@ const SESSION_SECRET = process.env.SESSION_SECRET;
 const PORT = Number(process.env.PORT || 3000);
 const FRONTEND_URL = process.env.FRONTEND_URL || "/";
 const CORS_ORIGIN = process.env.CORS_ORIGIN;
+const DATABASE_URL = process.env.DATABASE_URL;
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 console.log('🔍 Проверка переменных:');
 console.log('STEAM_API_KEY:', STEAM_API_KEY ? '✅ ЕСТЬ' : '❌ НЕТ');
 console.log('SESSION_SECRET:', SESSION_SECRET ? '✅ ЕСТЬ' : '❌ НЕТ');
+console.log('DATABASE_URL:', DATABASE_URL ? '✅ ЕСТЬ' : '❌ НЕТ');
 console.log('FRONTEND_URL:', FRONTEND_URL);
-console.log('IS_PRODUCTION:', IS_PRODUCTION);
 
 if (!STEAM_API_KEY) {
     console.error("❌ Missing STEAM_API_KEY.");
@@ -26,6 +29,10 @@ if (!STEAM_API_KEY) {
 }
 if (!SESSION_SECRET) {
     console.error("❌ Missing SESSION_SECRET.");
+    process.exit(1);
+}
+if (!DATABASE_URL) {
+    console.error("❌ Missing DATABASE_URL.");
     process.exit(1);
 }
 
@@ -41,17 +48,27 @@ if (CORS_ORIGIN) {
 
 app.use(express.json());
 
-// ===== СЕССИИ =====
+// ===== ПОДКЛЮЧЕНИЕ К POSTGRESQL =====
+const pool = new pg.Pool({
+    connectionString: DATABASE_URL,
+});
+
+const pgSession = connectPgSimple(session);
+
+// ===== СЕССИИ В POSTGRESQL =====
 app.use(
     session({
+        store: new pgSession({
+            pool: pool,
+            tableName: "session"  // Автоматически создаст таблицу
+        }),
         secret: SESSION_SECRET,
         resave: false,
         saveUninitialized: false,
         cookie: {
             httpOnly: true,
             sameSite: "lax",
-            // ВАЖНО: secure: false для разработки, true для продакшена с HTTPS
-            secure: false,  // ← ИЗМЕНЕНО: всегда false для теста
+            secure: false,  // Временно для теста
             maxAge: 1000 * 60 * 60 * 24 * 7,
         },
     })
@@ -104,17 +121,15 @@ passport.deserializeUser((user, done) => {
 
 app.get("/api/auth/steam", passport.authenticate("steam", { failureRedirect: "/" }));
 
-// ===== ИСПРАВЛЕННЫЙ МАРШРУТ ВОЗВРАТА =====
 app.get(
     "/api/auth/steam/return",
-    passport.authenticate("steam", { 
+    passport.authenticate("steam", {
         failureRedirect: "/",
-        successRedirect: FRONTEND_URL,  // ← ПРЯМОЙ РЕДИРЕКТ НА ВАШ САЙТ
+        successRedirect: FRONTEND_URL,
     })
 );
 
 app.get("/api/auth/me", (req, res) => {
-    console.log('🔍 Проверка пользователя:', req.isAuthenticated?.());
     if (!req.isAuthenticated || !req.isAuthenticated()) {
         return res.status(401).json({ error: "Unauthorized" });
     }
