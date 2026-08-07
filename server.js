@@ -39,17 +39,25 @@ if (!DATABASE_URL) {
 
 const app = express();
 
-// ===== CORS — РАЗРЕШАЕМ ВСЕ ЗАПРОСЫ ДЛЯ ТЕСТА =====
+// ===== CORS =====
+const allowedOrigins = [
+    'https://adored-monstera-794345.framer.app',
+    'https://www.adored-monstera-794345.framer.app',
+    'http://localhost:5173',
+    'http://localhost:3000'
+];
+
 app.use(cors({
-    origin: [
-        'https://adored-monstera-794345.framer.app',
-        'https://www.adored-monstera-794345.framer.app',
-        'http://localhost:5173',
-        'http://localhost:3000'
-    ],
+    origin: function (origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'Accept'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'Accept', 'Set-Cookie'],
 }));
 
 app.use(express.json());
@@ -87,23 +95,24 @@ async function createSessionTable() {
 }
 
 // ===== СЕССИИ =====
-app.use(
-    session({
-        store: new pgSession({
-            pool: pool,
-            tableName: "session",
-        }),
-        secret: SESSION_SECRET,
-        resave: false,
-        saveUninitialized: false,
-        cookie: {
-            httpOnly: true,
-            sameSite: "none",
-            secure: true,
-            maxAge: 1000 * 60 * 60 * 24 * 7,
-        },
-    })
-);
+const sessionMiddleware = session({
+    store: new pgSession({
+        pool: pool,
+        tableName: "session",
+    }),
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        sameSite: "none",
+        secure: true,
+        maxAge: 1000 * 60 * 60 * 24 * 7,
+        domain: '.railway.app', // ← ДОБАВЛЕНО: общий домен для всех поддоменов Railway
+    },
+});
+
+app.use(sessionMiddleware);
 
 app.use(passport.initialize());
 app.use(passport.session());
@@ -154,20 +163,22 @@ passport.deserializeUser((user, done) => {
 //  МАРШРУТЫ
 // =======================================================
 
-// Логируем все запросы для отладки
-app.use((req, res, next) => {
-    console.log(`📝 ${req.method} ${req.path}`);
-    next();
-});
-
 app.get("/api/auth/steam", passport.authenticate("steam", { failureRedirect: "/" }));
 
+// ===== ИЗМЕНЕНО: ЯВНАЯ УСТАНОВКА КУКИ =====
 app.get(
     "/api/auth/steam/return",
-    passport.authenticate("steam", {
-        failureRedirect: "/",
-        successRedirect: FRONTEND_URL,
-    })
+    passport.authenticate("steam", { failureRedirect: "/" }),
+    (req, res) => {
+        console.log('✅ Успешный вход! Пользователь:', req.user?.name);
+        // Явно сохраняем сессию перед редиректом
+        req.session.save((err) => {
+            if (err) {
+                console.error('❌ Ошибка сохранения сессии:', err);
+            }
+            res.redirect(FRONTEND_URL);
+        });
+    }
 );
 
 app.get("/api/auth/me", (req, res) => {
@@ -185,11 +196,11 @@ function logoutHandler(req, res, next) {
         req.session.destroy(function onDestroy(sessionErr) {
             if (sessionErr) return next(sessionErr);
 
-            const cookieName = req.session?.cookie?.name || "connect.sid";
-            res.clearCookie(cookieName, {
+            res.clearCookie('connect.sid', {
                 httpOnly: true,
                 sameSite: "none",
                 secure: true,
+                domain: '.railway.app',
             });
             return res.json({ success: true });
         });
@@ -202,10 +213,6 @@ app.post("/api/auth/logout", logoutHandler);
 app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
-
-// =======================================================
-//  ОБРАБОТКА ОШИБОК
-// =======================================================
 
 app.use((req, res) => {
     console.log(`❌ 404: ${req.method} ${req.path}`);
