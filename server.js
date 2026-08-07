@@ -39,17 +39,20 @@ if (!DATABASE_URL) {
 
 const app = express();
 
-// ===== CORS =====
+// ===== CORS — РАЗРЕШАЕМ ВСЕ ЗАПРОСЫ С FRAMER =====
 app.use(cors({
-    origin: [
-        'https://adored-monstera-794345.framer.app',
-        'https://www.adored-monstera-794345.framer.app',
-        'http://localhost:5173',
-        'http://localhost:3000'
-    ],
+    origin: function (origin, callback) {
+        // Разрешаем запросы без origin (например, из Postman) и с Framer
+        if (!origin || origin.includes('framer.app') || origin.includes('localhost')) {
+            callback(null, true);
+        } else {
+            console.log('❌ Заблокирован CORS запрос с:', origin);
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'Accept'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'Accept', 'Set-Cookie'],
 }));
 
 app.use(express.json());
@@ -87,24 +90,23 @@ async function createSessionTable() {
 }
 
 // ===== СЕССИИ =====
-const sessionMiddleware = session({
-    store: new pgSession({
-        pool: pool,
-        tableName: "session",
-    }),
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        httpOnly: true,
-        sameSite: "none",
-        secure: true,
-        maxAge: 1000 * 60 * 60 * 24 * 7,
-        domain: '.railway.app', // ← ДОБАВЛЕНО: общий домен для всех поддоменов Railway
-    },
-});
-
-app.use(sessionMiddleware);
+app.use(
+    session({
+        store: new pgSession({
+            pool: pool,
+            tableName: "session",
+        }),
+        secret: SESSION_SECRET,
+        resave: false,
+        saveUninitialized: false,
+        cookie: {
+            httpOnly: true,
+            sameSite: "none",
+            secure: true,
+            maxAge: 1000 * 60 * 60 * 24 * 7,
+        },
+    })
+);
 
 app.use(passport.initialize());
 app.use(passport.session());
@@ -157,19 +159,12 @@ passport.deserializeUser((user, done) => {
 
 app.get("/api/auth/steam", passport.authenticate("steam", { failureRedirect: "/" }));
 
-// ===== ИЗМЕНЕНО: ЯВНАЯ УСТАНОВКА КУКИ =====
 app.get(
     "/api/auth/steam/return",
     passport.authenticate("steam", { failureRedirect: "/" }),
     (req, res) => {
         console.log('✅ Успешный вход! Пользователь:', req.user?.name);
-        // Явно сохраняем сессию перед редиректом
-        req.session.save((err) => {
-            if (err) {
-                console.error('❌ Ошибка сохранения сессии:', err);
-            }
-            res.redirect(FRONTEND_URL);
-        });
+        res.redirect(FRONTEND_URL);
     }
 );
 
@@ -192,7 +187,6 @@ function logoutHandler(req, res, next) {
                 httpOnly: true,
                 sameSite: "none",
                 secure: true,
-                domain: '.railway.app',
             });
             return res.json({ success: true });
         });
