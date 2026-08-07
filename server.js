@@ -81,6 +81,30 @@ async function createSessionTable() {
     }
 }
 
+// ===== ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ТАБЛИЦЫ steam_prices =====
+async function createSteamPricesTable() {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS steam_prices (
+                id SERIAL PRIMARY KEY,
+                item_name TEXT NOT NULL,
+                market_hash_name TEXT NOT NULL,
+                price DECIMAL(10, 2),
+                currency TEXT DEFAULT 'USD',
+                updated_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(item_name)
+            );
+        `);
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_steam_prices_updated ON steam_prices(updated_at);
+        `);
+        console.log('✅ Таблица steam_prices создана или уже существует');
+    } catch (error) {
+        console.error('❌ Ошибка создания таблицы steam_prices:', error.message);
+        throw error;
+    }
+}
+
 // ===== СЕССИИ В POSTGRESQL =====
 app.use(
     session({
@@ -216,8 +240,8 @@ async function updateSteamPrices() {
         
         for (const itemName of items) {
             try {
-                // ===== ЗАДЕРЖКА 2 СЕКУНДЫ МЕЖДУ ЗАПРОСАМИ =====
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                // ===== ЗАДЕРЖКА 3 СЕКУНДЫ МЕЖДУ ЗАПРОСАМИ =====
+                await new Promise(resolve => setTimeout(resolve, 3000));
                 
                 const response = await axios.get(
                     'https://steamcommunity.com/market/priceoverview/',
@@ -305,7 +329,9 @@ app.use((err, req, res, _next) => {
 
 async function startServer() {
     try {
+        // Создаём обе таблицы
         await createSessionTable();
+        await createSteamPricesTable();
 
         // ===== ЗАПЛАНИРОВАННОЕ ОБНОВЛЕНИЕ ЦЕН (каждые 6 часов) =====
         cron.schedule('0 */6 * * *', () => {
