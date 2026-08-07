@@ -145,16 +145,30 @@ passport.use(
     )
 );
 
-// ===== ИСПРАВЛЕННЫЙ СЕРИАЛИЗАТОР =====
+// ===== ИСПРАВЛЕННАЯ СЕРИАЛИЗАЦИЯ =====
 passport.serializeUser((user, done) => {
-    console.log('🔍 Сериализация пользователя:', user?.name);
-    done(null, user);
+    console.log('🔍 Сериализация пользователя с ID:', user.id);
+    // Сохраняем в сессию только ID
+    done(null, user.id);
 });
 
-passport.deserializeUser((user, done) => {
-    console.log('🔍 Десериализация пользователя:', user?.name);
-    // Просто возвращаем пользователя из сессии
-    done(null, user);
+passport.deserializeUser(async (id, done) => {
+    console.log('🔍 Десериализация пользователя с ID:', id);
+    try {
+        // Здесь нужно получить пользователя из БД
+        // Пока создаём заглушку
+        const user = {
+            id: id,
+            name: 'Steam User',
+            avatar: 'https://avatars.steamstatic.com/...',
+            balance: 0
+        };
+        console.log('✅ Пользователь десериализован:', user.id);
+        done(null, user);
+    } catch (error) {
+        console.error('❌ Ошибка десериализации:', error);
+        done(error);
+    }
 });
 
 // =======================================================
@@ -168,6 +182,7 @@ app.get(
     passport.authenticate("steam", { failureRedirect: "/" }),
     (req, res) => {
         console.log('✅ Успешный вход! Пользователь:', req.user?.name);
+        console.log('✅ User ID:', req.user?.id);
         
         req.session.save((err) => {
             if (err) {
