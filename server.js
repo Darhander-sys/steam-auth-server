@@ -1,3 +1,4 @@
+// ПЕРВАЯ СТРОКА — загрузка переменных из .env
 require('dotenv').config();
 
 const express = require("express");
@@ -7,6 +8,7 @@ const SteamStrategy = require("passport-steam").Strategy;
 const redis = require("redis");
 
 // ===== ПРАВИЛЬНЫЙ ИМПОРТ ДЛЯ connect-redis@5 =====
+// connect-redis@5 экспортирует функцию, которую нужно вызвать с session
 const RedisStore = require("connect-redis")(session);
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
@@ -156,12 +158,14 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: "Internal server error" });
 });
 
-// ===== ЗАПУСК =====
+// ===== ЗАПУСК С ПОДКЛЮЧЕНИЕМ REDIS =====
 async function startServer() {
     try {
+        // Подключаемся к Redis
         await redisClient.connect();
         console.log('✅ Redis готов к работе');
 
+        // Запускаем сервер
         app.listen(PORT, () => {
             console.log(`✅ Steam auth server listening on ${BASE_URL} (port ${PORT})`);
             console.log(`🔗 Steam login: ${BASE_URL}/api/auth/steam`);
@@ -171,6 +175,7 @@ async function startServer() {
         console.error('❌ Ошибка подключения к Redis:', error.message);
         console.log('⚠️ Сервер запускается БЕЗ Redis (сессии в памяти)');
 
+        // Запускаем сервер даже без Redis (fallback)
         app.listen(PORT, () => {
             console.log(`⚠️ Сервер запущен БЕЗ Redis (порт ${PORT})`);
             console.log(`🔗 Steam login: ${BASE_URL}/api/auth/steam`);
