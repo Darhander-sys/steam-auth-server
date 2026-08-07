@@ -7,6 +7,7 @@ const passport = require("passport");
 const SteamStrategy = require("passport-steam").Strategy;
 const { Pool } = require("pg");
 const connectPgSimple = require("connect-pg-simple");
+const cors = require("cors");
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
@@ -21,6 +22,7 @@ console.log('STEAM_API_KEY:', STEAM_API_KEY ? '✅ ЕСТЬ' : '❌ НЕТ');
 console.log('SESSION_SECRET:', SESSION_SECRET ? '✅ ЕСТЬ' : '❌ НЕТ');
 console.log('DATABASE_URL:', DATABASE_URL ? '✅ ЕСТЬ' : '❌ НЕТ');
 console.log('FRONTEND_URL:', FRONTEND_URL);
+console.log('CORS_ORIGIN:', CORS_ORIGIN);
 
 if (!STEAM_API_KEY) {
     console.error("❌ Missing STEAM_API_KEY.");
@@ -37,13 +39,13 @@ if (!DATABASE_URL) {
 
 const app = express();
 
-if (CORS_ORIGIN) {
-    const cors = require("cors");
-    app.use(cors({
-        origin: CORS_ORIGIN,
-        credentials: true,
-    }));
-}
+// ===== CORS — РАЗРЕШАЕМ ЗАПРОСЫ С ВАШЕГО FRAMER САЙТА =====
+app.use(cors({
+    origin: CORS_ORIGIN || 'https://adored-monstera-794345.framer.app',
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
+}));
 
 app.use(express.json());
 
