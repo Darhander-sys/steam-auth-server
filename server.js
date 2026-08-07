@@ -6,7 +6,9 @@ const session = require("express-session");
 const passport = require("passport");
 const SteamStrategy = require("passport-steam").Strategy;
 const redis = require("redis");
-const RedisStore = require("connect-redis")(session);
+
+// ===== ПРАВИЛЬНЫЙ ИМПОРТ RedisStore =====
+const RedisStore = require("connect-redis");
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
@@ -20,6 +22,7 @@ console.log('🔍 Проверка переменных:');
 console.log('STEAM_API_KEY:', process.env.STEAM_API_KEY ? '✅ ЕСТЬ' : '❌ НЕТ');
 console.log('SESSION_SECRET:', process.env.SESSION_SECRET ? '✅ ЕСТЬ' : '❌ НЕТ');
 console.log('REDIS_URL:', process.env.REDIS_URL ? '✅ ЕСТЬ' : '❌ НЕТ');
+console.log('FRONTEND_URL:', FRONTEND_URL);
 
 if (!STEAM_API_KEY) {
     console.error("❌ Missing STEAM_API_KEY.");
@@ -55,6 +58,7 @@ redisClient.on('connect', () => console.log('✅ Redis подключен'));
 // ===== НАСТРОЙКА СЕССИЙ (ДО PASSPORT!) =====
 app.use(
     session({
+        // ===== ПРАВИЛЬНОЕ ИСПОЛЬЗОВАНИЕ RedisStore =====
         store: new RedisStore({ client: redisClient }),
         secret: SESSION_SECRET,
         resave: false,
@@ -112,9 +116,16 @@ passport.deserializeUser((user, done) => {
 // ===== МАРШРУТЫ =====
 app.get("/api/auth/steam", passport.authenticate("steam", { failureRedirect: "/" }));
 
-app.get("/api/auth/steam/return", passport.authenticate("steam", { failureRedirect: "/" }), (req, res) => {
-    res.redirect(FRONTEND_URL);
-});
+app.get("/api/auth/steam/return", 
+    passport.authenticate("steam", { 
+        failureRedirect: "/",
+        failureMessage: true 
+    }),
+    (req, res) => {
+        console.log('✅ Успешный вход! Пользователь:', req.user?.name);
+        res.redirect(FRONTEND_URL);
+    }
+);
 
 app.get("/api/auth/me", (req, res) => {
     if (!req.isAuthenticated || !req.isAuthenticated()) {
