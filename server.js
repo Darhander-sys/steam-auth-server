@@ -7,6 +7,8 @@ const passport = require("passport");
 const SteamStrategy = require("passport-steam").Strategy;
 const { Pool } = require("pg");
 const connectPgSimple = require("connect-pg-simple");
+const axios = require('axios');
+const cron = require('node-cron');
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
@@ -50,12 +52,15 @@ app.use(express.json());
 // ===== ПОДКЛЮЧЕНИЕ К POSTGRESQL =====
 const pool = new Pool({
     connectionString: DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
+    ssl: { rejectUnauthorized: false },
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
 });
 
 const pgSession = connectPgSimple(session);
 
-// ===== ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ТАБЛИЦЫ =====
+// ===== ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ТАБЛИЦЫ СЕССИЙ =====
 async function createSessionTable() {
     try {
         await pool.query(`
@@ -140,6 +145,10 @@ passport.deserializeUser((user, done) => {
     done(null, user);
 });
 
+// =======================================================
+//  МАРШРУТЫ
+// =======================================================
+
 app.get("/api/auth/steam", passport.authenticate("steam", { failureRedirect: "/" }));
 
 app.get(
@@ -182,6 +191,94 @@ app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// =======================================================
+//  КЭШИРОВАНИЕ ЦЕН STEAM
+// =======================================================
+
+// ===== ФУНКЦИЯ ОБНОВЛЕНИЯ ЦЕН ИЗ STEAM =====
+async function updateSteamPrices() {
+    console.log('🔄 Обновление цен из Steam...');
+    try {
+        // Список предметов для обновления (ДОБАВЬТЕ ВСЕ СВОИ ПРЕДМЕТЫ)
+        const items = [
+            'AK-47 | Redline (Field-Tested)',
+            'AWP | Dragon Lore (Factory New)',
+            'M4A4 | Howl (Factory New)',
+            '★ Butterfly Knife | Fade (Factory New)',
+            '★ Karambit | Doppler (Factory New)',
+            'AK-47 | Fire Serpent (Minimal Wear)',
+            'AWP | Medusa (Well-Worn)',
+            // ДОБАВЬТЕ ВСЕ ПРЕДМЕТЫ ИЗ ВАШИХ КЕЙСОВ
+        ];
+        
+        for (const itemName of items) {
+            try {
+                const response = await axios.get(
+                    'https://steamcommunity.com/market/priceoverview/',
+                    {
+                        params: {
+                            appid: 730,
+                            currency: 'USD',
+                            market_hash_name: itemName
+                        }
+                    }
+                );
+
+                if (response.data && response.data.success) {
+                    const price = parseFloat(response.data.lowest_price.replace('$', '').trim());
+                    
+                    await pool.query(
+                        `INSERT INTO steam_prices (item_name, market_hash_name, price, updated_at) 
+                         VALUES ($1, $2, $3, NOW()) 
+                         ON CONFLICT (item_name) 
+                         DO UPDATE SET price = $3, updated_at = NOW()`,
+                        [itemName, itemName, price]
+                    );
+                    
+                    console.log(`✅ Цена обновлена: ${itemName} → $${price}`);
+                }
+            } catch (error) {
+                console.error(`❌ Ошибка обновления ${itemName}:`, error.message);
+            }
+        }
+    } catch (error) {
+        console.error('❌ Ошибка обновления цен:', error.message);
+    }
+}
+
+// ===== ФУНКЦИЯ ПОЛУЧЕНИЯ ЦЕНЫ ИЗ КЭША =====
+async function getCachedPrice(itemName) {
+    const result = await pool.query(
+        'SELECT price, updated_at FROM steam_prices WHERE item_name = $1',
+        [itemName]
+    );
+    
+    if (result.rows.length === 0) {
+        console.log(`⚠️ Цена для ${itemName} не найдена в кэше`);
+        return 0;
+    }
+    
+    return result.rows[0].price;
+}
+
+// ===== ТЕСТОВЫЙ МАРШРУТ ДЛЯ ПРОВЕРКИ КЭША =====
+app.get("/api/price/:item", async (req, res) => {
+    try {
+        const price = await getCachedPrice(req.params.item);
+        res.json({ 
+            item: req.params.item, 
+            price: price,
+            cached: true 
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// =======================================================
+//  ОБРАБОТКА ОШИБОК
+// =======================================================
+
 app.use((req, res) => {
     res.status(404).json({ error: "Not found" });
 });
@@ -192,10 +289,22 @@ app.use((err, req, res, _next) => {
     res.status(500).json({ error: err.message });
 });
 
-// ===== ЗАПУСК =====
+// =======================================================
+//  ЗАПУСК СЕРВЕРА
+// =======================================================
+
 async function startServer() {
     try {
         await createSessionTable();
+
+        // ===== ЗАПЛАНИРОВАННОЕ ОБНОВЛЕНИЕ ЦЕН (каждые 6 часов) =====
+        cron.schedule('0 */6 * * *', () => {
+            console.log('🕐 Запуск планового обновления цен...');
+            updateSteamPrices();
+        });
+
+        // Запускаем первое обновление при старте сервера
+        await updateSteamPrices();
 
         app.listen(PORT, () => {
             console.log(`✅ Steam auth server listening on ${BASE_URL} (port ${PORT})`);
