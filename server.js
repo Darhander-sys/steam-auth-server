@@ -6,7 +6,7 @@ const session = require("express-session")
 const passport = require("passport")
 const SteamStrategy = require("passport-steam").Strategy
 const redis = require("redis");
-const RedisStore = require("connect-redis");
+const RedisStore = require("connect-redis")(session);
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000"
@@ -61,7 +61,7 @@ app.use(express.json())
 
 app.use(
     session({
-        store: RedisStore({ client: redisClient }),
+        store: new RedisStore({ client: redisClient }),
         secret: SESSION_SECRET,
         resave: false,
         saveUninitialized: false,
