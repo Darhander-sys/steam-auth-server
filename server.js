@@ -95,8 +95,9 @@ passport.use(
             returnURL: `${BASE_URL}/api/auth/steam/return`,
             realm: BASE_URL,
             apiKey: STEAM_API_KEY,
+            passReqToCallback: true // <--- ДОБАВЛЯЕМ ЭТУ СТРОКУ
         },
-        function verify(_identifier, profile, done) {
+        function verify(req, identifier, profile, done) { // <--- ДОБАВЛЯЕМ req
             try {
                 const user = normalizeSteamUser(profile)
                 return done(null, user)
