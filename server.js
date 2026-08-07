@@ -5,6 +5,8 @@ const express = require("express")
 const session = require("express-session")
 const passport = require("passport")
 const SteamStrategy = require("passport-steam").Strategy
+const redis = require("redis");
+const RedisStore = require("connect-redis").default;
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000"
@@ -33,6 +35,14 @@ if (!SESSION_SECRET) {
     process.exit(1)
 }
 
+const redisClient = redis.createClient({
+  url: process.env.REDIS_URL
+});
+
+// Подключаемся к базе Redis
+redisClient.connect().catch((err) => {
+    console.error("❌ Redis connection failed:", err.message);
+});
 const app = express()
 
 if (CORS_ORIGIN) {
@@ -49,6 +59,7 @@ app.use(express.json())
 
 app.use(
     session({
+        store: new RedisStore({ client: redisClient }),
         secret: SESSION_SECRET,
         resave: false,
         saveUninitialized: false,
