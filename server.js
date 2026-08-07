@@ -44,48 +44,34 @@ if (CORS_ORIGIN) {
 
 app.use(express.json());
 
-// ===== ИНИЦИАЛИЗАЦИЯ PASSPORT ДО REDIS =====
+// ===== НАСТРОЙКА REDIS =====
+const redisClient = redis.createClient({
+    url: process.env.REDIS_URL || 'redis://localhost:6379'
+});
+
+redisClient.on('error', (err) => console.log('❌ Redis Client Error:', err.message));
+redisClient.on('connect', () => console.log('✅ Redis подключен'));
+
+// ===== НАСТРОЙКА СЕССИЙ (ДО PASSPORT!) =====
+app.use(
+    session({
+        store: new RedisStore({ client: redisClient }),
+        secret: SESSION_SECRET,
+        resave: false,
+        saveUninitialized: false,
+        cookie: {
+            httpOnly: true,
+            sameSite: "lax",
+            secure: IS_PRODUCTION,
+            maxAge: 1000 * 60 * 60 * 24 * 7,
+        },
+    })
+);
+
+// ===== PASSPORT (ПОСЛЕ СЕССИЙ!) =====
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ===== НАСТРОЙКА REDIS (с отказоустойчивостью) =====
-let redisClient = null;
-
-try {
-    redisClient = redis.createClient({
-        url: process.env.REDIS_URL || 'redis://localhost:6379'
-    });
-
-    redisClient.on('error', (err) => {
-        console.error('❌ Redis Client Error:', err.message);
-    });
-
-    redisClient.on('connect', () => {
-        console.log('✅ Redis подключен');
-    });
-
-    // Запускаем подключение (будет выполнено в startServer)
-} catch (error) {
-    console.error('❌ Redis creation error:', error.message);
-}
-
-// ===== СЕССИИ =====
-const sessionStore = redisClient ? new RedisStore({ client: redisClient }) : undefined;
-
-app.use(session({
-    store: sessionStore,
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: IS_PRODUCTION,
-        maxAge: 1000 * 60 * 60 * 24 * 7,
-    },
-}));
-
-// ===== PASSPORT STEAM =====
 function normalizeSteamUser(profile) {
     const photos = Array.isArray(profile?.photos) ? profile.photos : [];
     const avatar =
@@ -172,25 +158,21 @@ app.use((err, req, res, _next) => {
     res.status(500).json({ error: "Internal server error" });
 });
 
-// ===== ЗАПУСК СЕРВЕРА =====
+// ===== ПОДКЛЮЧЕНИЕ К REDIS И ЗАПУСК =====
 async function startServer() {
     try {
-        // Подключаемся к Redis, если он есть
-        if (redisClient) {
-            await redisClient.connect();
-            console.log('✅ Redis подключен');
-        } else {
-            console.log('⚠️ Redis не настроен, сессии в памяти');
-        }
-
+        await redisClient.connect();
+        console.log('✅ Redis подключен и готов к работе');
+        
         app.listen(PORT, () => {
             console.log(`✅ Steam auth server listening on ${BASE_URL} (port ${PORT})`);
             console.log(`🔗 Steam login: ${BASE_URL}/api/auth/steam`);
             console.log(`🏥 Health check: ${BASE_URL}/api/health`);
         });
     } catch (error) {
-        console.error('❌ Ошибка запуска:', error.message);
-        // Сервер все равно запускаем без Redis
+        console.error('❌ Ошибка подключения к Redis:', error.message);
+        console.log('⚠️ Сервер запускается БЕЗ Redis (сессии в памяти)');
+        
         app.listen(PORT, () => {
             console.log(`⚠️ Сервер запущен БЕЗ Redis (порт ${PORT})`);
             console.log(`🔗 Steam login: ${BASE_URL}/api/auth/steam`);
