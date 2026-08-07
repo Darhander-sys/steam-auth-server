@@ -1,12 +1,13 @@
 {
   "name": "steam-auth-server",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Steam authentication server for Framer site",
+  "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": ["steam", "auth", "passport", "framer"],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
