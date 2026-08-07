@@ -195,11 +195,11 @@ app.get("/api/health", (req, res) => {
 //  КЭШИРОВАНИЕ ЦЕН STEAM
 // =======================================================
 
-// ===== ФУНКЦИЯ ОБНОВЛЕНИЯ ЦЕН ИЗ STEAM =====
+// ===== ФУНКЦИЯ ОБНОВЛЕНИЯ ЦЕН ИЗ STEAM (с задержкой) =====
 async function updateSteamPrices() {
     console.log('🔄 Обновление цен из Steam...');
     try {
-        // Список предметов для обновления (ДОБАВЬТЕ ВСЕ СВОИ ПРЕДМЕТЫ)
+        // ⚠️ СПИСОК ПРЕДМЕТОВ — ДОБАВЬТЕ ВСЕ СВОИ ПРЕДМЕТЫ
         const items = [
             'AK-47 | Redline (Field-Tested)',
             'AWP | Dragon Lore (Factory New)',
@@ -208,11 +208,17 @@ async function updateSteamPrices() {
             '★ Karambit | Doppler (Factory New)',
             'AK-47 | Fire Serpent (Minimal Wear)',
             'AWP | Medusa (Well-Worn)',
-            // ДОБАВЬТЕ ВСЕ ПРЕДМЕТЫ ИЗ ВАШИХ КЕЙСОВ
+            // ДОБАВЬТЕ СЮДА ВСЕ ПРЕДМЕТЫ ИЗ ВАШИХ КЕЙСОВ
         ];
+        
+        let successCount = 0;
+        let failCount = 0;
         
         for (const itemName of items) {
             try {
+                // ===== ЗАДЕРЖКА 2 СЕКУНДЫ МЕЖДУ ЗАПРОСАМИ =====
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
                 const response = await axios.get(
                     'https://steamcommunity.com/market/priceoverview/',
                     {
@@ -236,11 +242,15 @@ async function updateSteamPrices() {
                     );
                     
                     console.log(`✅ Цена обновлена: ${itemName} → $${price}`);
+                    successCount++;
                 }
             } catch (error) {
                 console.error(`❌ Ошибка обновления ${itemName}:`, error.message);
+                failCount++;
             }
         }
+        
+        console.log(`📊 Обновление цен завершено: успешно ${successCount}, ошибок ${failCount}`);
     } catch (error) {
         console.error('❌ Ошибка обновления цен:', error.message);
     }
