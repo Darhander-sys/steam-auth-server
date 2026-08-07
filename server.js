@@ -5,7 +5,7 @@ const express = require("express");
 const session = require("express-session");
 const passport = require("passport");
 const SteamStrategy = require("passport-steam").Strategy;
-const pg = require("pg");
+const { Pool } = require("pg");
 const connectPgSimple = require("connect-pg-simple");
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
@@ -15,7 +15,6 @@ const PORT = Number(process.env.PORT || 3000);
 const FRONTEND_URL = process.env.FRONTEND_URL || "/";
 const CORS_ORIGIN = process.env.CORS_ORIGIN;
 const DATABASE_URL = process.env.DATABASE_URL;
-const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 console.log('🔍 Проверка переменных:');
 console.log('STEAM_API_KEY:', STEAM_API_KEY ? '✅ ЕСТЬ' : '❌ НЕТ');
@@ -49,18 +48,40 @@ if (CORS_ORIGIN) {
 app.use(express.json());
 
 // ===== ПОДКЛЮЧЕНИЕ К POSTGRESQL =====
-const pool = new pg.Pool({
+const pool = new Pool({
     connectionString: DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
 });
 
 const pgSession = connectPgSimple(session);
+
+// ===== ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ТАБЛИЦЫ =====
+async function createSessionTable() {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS "session" (
+                "sid" varchar NOT NULL,
+                "sess" json NOT NULL,
+                "expire" timestamp(6) NOT NULL,
+                CONSTRAINT "session_pkey" PRIMARY KEY ("sid")
+            );
+        `);
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
+        `);
+        console.log('✅ Таблица session создана или уже существует');
+    } catch (error) {
+        console.error('❌ Ошибка создания таблицы session:', error.message);
+        throw error;
+    }
+}
 
 // ===== СЕССИИ В POSTGRESQL =====
 app.use(
     session({
         store: new pgSession({
             pool: pool,
-            tableName: "session"  // Автоматически создаст таблицу
+            tableName: "session",
         }),
         secret: SESSION_SECRET,
         resave: false,
@@ -68,7 +89,7 @@ app.use(
         cookie: {
             httpOnly: true,
             sameSite: "lax",
-            secure: false,  // Временно для теста
+            secure: false,
             maxAge: 1000 * 60 * 60 * 24 * 7,
         },
     })
@@ -168,11 +189,23 @@ app.use((req, res) => {
 app.use((err, req, res, _next) => {
     console.error("❌ Server error:", err);
     if (res.headersSent) return;
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ error: err.message });
 });
 
-app.listen(PORT, () => {
-    console.log(`✅ Steam auth server listening on ${BASE_URL} (port ${PORT})`);
-    console.log(`🔗 Steam login: ${BASE_URL}/api/auth/steam`);
-    console.log(`🏥 Health check: ${BASE_URL}/api/health`);
-});
+// ===== ЗАПУСК =====
+async function startServer() {
+    try {
+        await createSessionTable();
+
+        app.listen(PORT, () => {
+            console.log(`✅ Steam auth server listening on ${BASE_URL} (port ${PORT})`);
+            console.log(`🔗 Steam login: ${BASE_URL}/api/auth/steam`);
+            console.log(`🏥 Health check: ${BASE_URL}/api/health`);
+        });
+    } catch (error) {
+        console.error('❌ Критическая ошибка:', error);
+        process.exit(1);
+    }
+}
+
+startServer();
