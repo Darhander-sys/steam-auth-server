@@ -7,8 +7,8 @@ const passport = require("passport")
 const SteamStrategy = require("passport-steam").Strategy
 const redis = require("redis");
 
-// ИЗМЕНЕНИЕ: Импортируем библиотеку без вызова функции (так надежнее)
-const RedisStore = require("connect-redis");
+// ИЗМЕНЕНИЕ: Подключаем через классический require без скобок
+const RedisStore = require("connect-redis")(session);
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000"
@@ -18,31 +18,25 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "/"
 const CORS_ORIGIN = process.env.CORS_ORIGIN
 const IS_PRODUCTION = process.env.NODE_ENV === "production"
 
-// ОТЛАДКА: проверяем, что переменные загрузились
 console.log('🔍 Проверка переменных:');
 console.log('STEAM_API_KEY:', process.env.STEAM_API_KEY ? '✅ ЕСТЬ' : '❌ НЕТ');
 console.log('SESSION_SECRET:', process.env.SESSION_SECRET ? '✅ ЕСТЬ' : '❌ НЕТ');
 
 if (!STEAM_API_KEY) {
-    console.error(
-        "❌ Missing STEAM_API_KEY. Set STEAM_API_KEY in your environment before starting the server."
-    )
+    console.error("❌ Missing STEAM_API_KEY.");
     process.exit(1)
 }
 
 if (!SESSION_SECRET) {
-    console.error(
-        "❌ Missing SESSION_SECRET. Set SESSION_SECRET in your environment before starting the server."
-    )
+    console.error("❌ Missing SESSION_SECRET.");
     process.exit(1)
 }
 
-// ИЗМЕНЕНИЕ: Создаем клиента Redis
+// ИЗМЕНЕНИЕ: Настройка Redis
 const redisClient = redis.createClient({
   url: process.env.REDIS_URL
 });
 
-// Обязательная обработка ошибок для Node.js v22
 redisClient.on('error', (err) => console.log('Redis Client Error', err));
 
 redisClient.connect().catch((err) => {
@@ -63,10 +57,10 @@ if (CORS_ORIGIN) {
 
 app.use(express.json())
 
-// ИЗМЕНЕНИЕ: Вызываем RedisStore как функцию, убираем "new"
+// ИЗМЕНЕНИЕ: Возвращаем классический NEW, который работает в версии 6.x
 app.use(
     session({
-        store: RedisStore({ client: redisClient }), 
+        store: new RedisStore({ client: redisClient }), 
         secret: SESSION_SECRET,
         resave: false,
         saveUninitialized: false,
@@ -85,16 +79,9 @@ app.use(passport.session())
 function normalizeSteamUser(profile) {
     const photos = Array.isArray(profile?.photos) ? profile.photos : []
     const avatar =
-        photos.find(
-            (p) => p && typeof p.value === "string" && p.value.includes("full")
-        )?.value ||
-        photos.find(
-            (p) =>
-                p && typeof p.value === "string" && p.value.includes("medium")
-        )?.value ||
-        photos.find((p) => p && typeof p.value === "string" && p.value)
-            ?.value ||
-        ""
+        photos.find((p) => p && typeof p.value === "string" && p.value.includes("full"))?.value ||
+        photos.find((p) => p && typeof p.value === "string" && p.value.includes("medium"))?.value ||
+        photos.find((p) => p && typeof p.value === "string" && p.value)?.value || ""
 
     return {
         id: String(profile?.id || ""),
@@ -130,18 +117,11 @@ passport.deserializeUser((user, done) => {
     done(null, user)
 })
 
-app.get(
-    "/api/auth/steam",
-    passport.authenticate("steam", { failureRedirect: "/" })
-)
+app.get("/api/auth/steam", passport.authenticate("steam", { failureRedirect: "/" }))
 
-app.get(
-    "/api/auth/steam/return",
-    passport.authenticate("steam", { failureRedirect: "/" }),
-    (req, res) => {
-        res.redirect(FRONTEND_URL)
-    }
-)
+app.get("/api/auth/steam/return", passport.authenticate("steam", { failureRedirect: "/" }), (req, res) => {
+    res.redirect(FRONTEND_URL)
+})
 
 app.get("/api/auth/me", (req, res) => {
     if (!req.isAuthenticated || !req.isAuthenticated()) {
@@ -171,7 +151,6 @@ function logoutHandler(req, res, next) {
 app.get("/api/auth/logout", logoutHandler)
 app.post("/api/auth/logout", logoutHandler)
 
-// Health check для проверки работоспособности
 app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() })
 })
