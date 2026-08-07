@@ -1,3 +1,4 @@
+// ПЕРВАЯ СТРОКА — загрузка переменных из .env
 require('dotenv').config();
 
 const express = require("express")
@@ -6,7 +7,7 @@ const passport = require("passport")
 const SteamStrategy = require("passport-steam").Strategy
 const redis = require("redis");
 
-// ВАЖНО: Подключаем через функцию (session). Это работает в версии 6.x
+// ИЗМЕНЕНИЕ: Подключаем через функцию (session) для версии 6.x
 const RedisStore = require("connect-redis")(session);
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY
@@ -55,7 +56,6 @@ if (CORS_ORIGIN) {
 
 app.use(express.json())
 
-// ЗДЕСЬ МЫ ИСПОЛЬЗУЕМ new RedisStore, КАК ПОЛОЖЕНО В 6-Й ВЕРСИИ
 app.use(
     session({
         store: new RedisStore({ client: redisClient }), 
@@ -117,9 +117,96 @@ passport.deserializeUser((user, done) => {
 
 app.get("/api/auth/steam", passport.authenticate("steam", { failureRedirect: "/" }))
 
-app.get("/api/auth/steam/return", passport.authenticate("steam", { failureRedirect: "/" }), (req, res) => {
-    res.redirect(FRONTEND_URL)
-})
+// ==============================================
+// ИЗМЕНЕНИЕ: Маршрут возврата (Здесь мы чиним ошибку 499)
+// ==============================================
+app.get(
+    "/api/auth/steam/return",
+    passport.authenticate("steam", { failureRedirect: "/" }),
+    (req, res) => {
+        res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Авторизация успешна</title>
+                <meta charset="utf-8">
+                <style>
+                    body {
+                        background: #f0f2f5;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        height: 100vh;
+                        margin: 0;
+                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                    }
+                    .card {
+                        background: white;
+                        padding: 40px;
+                        border-radius: 16px;
+                        box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+                        text-align: center;
+                        max-width: 380px;
+                        width: 90%;
+                    }
+                    .icon {
+                        font-size: 64px;
+                        margin-bottom: 15px;
+                        display: block;
+                    }
+                    h2 {
+                        color: #1a1a1a;
+                        margin: 0 0 10px 0;
+                        font-size: 24px;
+                    }
+                    p {
+                        color: #666;
+                        margin: 0 0 30px 0;
+                        font-size: 16px;
+                    }
+                    .btn {
+                        display: inline-block;
+                        background: #4CAF50;
+                        color: white;
+                        padding: 14px 32px;
+                        border-radius: 8px;
+                        text-decoration: none;
+                        font-weight: 600;
+                        font-size: 16px;
+                        transition: background 0.2s;
+                    }
+                    .btn:hover {
+                        background: #45a049;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="card">
+                    <span class="icon">✅</span>
+                    <h2>Вход выполнен!</h2>
+                    <p>Вы вошли как <strong>${req.user?.name || 'Steam User'}</strong>.<br>Теперь вы можете вернуться на сайт.</p>
+                    <a href="${FRONTEND_URL}" class="btn">Вернуться на сайт</a>
+                </div>
+                <script>
+                    // Умное закрытие окна, если оно было открыто через window.open
+                    setTimeout(() => {
+                        try {
+                            if (window.opener && !window.opener.closed) {
+                                window.close();
+                            }
+                        } catch (e) {
+                            // Игнорируем ошибки доступа к opener
+                        }
+                    }, 3000);
+                </script>
+            </body>
+            </html>
+        `);
+    }
+)
+// ==============================================
+// КОНЕЦ ИЗМЕНЕНИЙ
+// ==============================================
 
 app.get("/api/auth/me", (req, res) => {
     if (!req.isAuthenticated || !req.isAuthenticated()) {
