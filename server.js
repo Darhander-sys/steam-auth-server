@@ -40,24 +40,16 @@ if (!DATABASE_URL) {
 const app = express();
 
 // ===== CORS =====
-const allowedOrigins = [
-    'https://adored-monstera-794345.framer.app',
-    'https://www.adored-monstera-794345.framer.app',
-    'http://localhost:5173',
-    'http://localhost:3000'
-];
-
 app.use(cors({
-    origin: function (origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
+    origin: [
+        'https://adored-monstera-794345.framer.app',
+        'https://www.adored-monstera-794345.framer.app',
+        'http://localhost:5173',
+        'http://localhost:3000'
+    ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'Accept', 'Set-Cookie'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'Accept'],
 }));
 
 app.use(express.json());
