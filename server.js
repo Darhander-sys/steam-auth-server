@@ -39,10 +39,9 @@ if (!DATABASE_URL) {
 
 const app = express();
 
-// ===== CORS — РАЗРЕШАЕМ ВСЕ ЗАПРОСЫ С FRAMER =====
+// ===== CORS =====
 app.use(cors({
     origin: function (origin, callback) {
-        // Разрешаем запросы без origin (например, из Postman) и с Framer
         if (!origin || origin.includes('framer.app') || origin.includes('localhost')) {
             callback(null, true);
         } else {
@@ -90,23 +89,23 @@ async function createSessionTable() {
 }
 
 // ===== СЕССИИ =====
-app.use(
-    session({
-        store: new pgSession({
-            pool: pool,
-            tableName: "session",
-        }),
-        secret: SESSION_SECRET,
-        resave: false,
-        saveUninitialized: false,
-        cookie: {
-            httpOnly: true,
-            sameSite: "none",
-            secure: true,
-            maxAge: 1000 * 60 * 60 * 24 * 7,
-        },
-    })
-);
+const sessionMiddleware = session({
+    store: new pgSession({
+        pool: pool,
+        tableName: "session",
+    }),
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        sameSite: "none",
+        secure: true,
+        maxAge: 1000 * 60 * 60 * 24 * 7,
+    },
+});
+
+app.use(sessionMiddleware);
 
 app.use(passport.initialize());
 app.use(passport.session());
@@ -164,7 +163,14 @@ app.get(
     passport.authenticate("steam", { failureRedirect: "/" }),
     (req, res) => {
         console.log('✅ Успешный вход! Пользователь:', req.user?.name);
-        res.redirect(FRONTEND_URL);
+        
+        // ===== ЯВНО СОХРАНЯЕМ СЕССИЮ ПЕРЕД РЕДИРЕКТОМ =====
+        req.session.save((err) => {
+            if (err) {
+                console.error('❌ Ошибка сохранения сессии:', err);
+            }
+            res.redirect(FRONTEND_URL);
+        });
     }
 );
 
