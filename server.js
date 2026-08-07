@@ -39,12 +39,17 @@ if (!DATABASE_URL) {
 
 const app = express();
 
-// ===== CORS =====
+// ===== CORS — РАЗРЕШАЕМ ВСЕ ЗАПРОСЫ ДЛЯ ТЕСТА =====
 app.use(cors({
-    origin: CORS_ORIGIN || 'https://adored-monstera-794345.framer.app',
+    origin: [
+        'https://adored-monstera-794345.framer.app',
+        'https://www.adored-monstera-794345.framer.app',
+        'http://localhost:5173',
+        'http://localhost:3000'
+    ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'Accept'],
 }));
 
 app.use(express.json());
@@ -93,8 +98,8 @@ app.use(
         saveUninitialized: false,
         cookie: {
             httpOnly: true,
-            sameSite: "none",   // ← КРОСС-ДОМЕН
-            secure: true,       // ← ТРЕБУЕТ HTTPS
+            sameSite: "none",
+            secure: true,
             maxAge: 1000 * 60 * 60 * 24 * 7,
         },
     })
@@ -149,6 +154,12 @@ passport.deserializeUser((user, done) => {
 //  МАРШРУТЫ
 // =======================================================
 
+// Логируем все запросы для отладки
+app.use((req, res, next) => {
+    console.log(`📝 ${req.method} ${req.path}`);
+    next();
+});
+
 app.get("/api/auth/steam", passport.authenticate("steam", { failureRedirect: "/" }));
 
 app.get(
@@ -160,6 +171,7 @@ app.get(
 );
 
 app.get("/api/auth/me", (req, res) => {
+    console.log('🔍 Проверка аутентификации:', req.isAuthenticated?.());
     if (!req.isAuthenticated || !req.isAuthenticated()) {
         return res.status(401).json({ error: "Unauthorized" });
     }
@@ -196,6 +208,7 @@ app.get("/api/health", (req, res) => {
 // =======================================================
 
 app.use((req, res) => {
+    console.log(`❌ 404: ${req.method} ${req.path}`);
     res.status(404).json({ error: "Not found" });
 });
 
