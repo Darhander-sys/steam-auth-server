@@ -7,8 +7,6 @@ const passport = require("passport");
 const SteamStrategy = require("passport-steam").Strategy;
 const { Pool } = require("pg");
 const connectPgSimple = require("connect-pg-simple");
-const axios = require('axios');
-const cron = require('node-cron');
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
@@ -77,30 +75,6 @@ async function createSessionTable() {
         console.log('✅ Таблица session создана или уже существует');
     } catch (error) {
         console.error('❌ Ошибка создания таблицы session:', error.message);
-        throw error;
-    }
-}
-
-// ===== ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ТАБЛИЦЫ steam_prices =====
-async function createSteamPricesTable() {
-    try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS steam_prices (
-                id SERIAL PRIMARY KEY,
-                item_name TEXT NOT NULL,
-                market_hash_name TEXT NOT NULL,
-                price DECIMAL(10, 2),
-                currency TEXT DEFAULT 'USD',
-                updated_at TIMESTAMP DEFAULT NOW(),
-                UNIQUE(item_name)
-            );
-        `);
-        await pool.query(`
-            CREATE INDEX IF NOT EXISTS idx_steam_prices_updated ON steam_prices(updated_at);
-        `);
-        console.log('✅ Таблица steam_prices создана или уже существует');
-    } catch (error) {
-        console.error('❌ Ошибка создания таблицы steam_prices:', error.message);
         throw error;
     }
 }
@@ -216,100 +190,6 @@ app.get("/api/health", (req, res) => {
 });
 
 // =======================================================
-//  КЭШИРОВАНИЕ ЦЕН STEAM
-// =======================================================
-
-// ===== ФУНКЦИЯ ОБНОВЛЕНИЯ ЦЕН ИЗ STEAM (с задержкой) =====
-async function updateSteamPrices() {
-    console.log('🔄 Обновление цен из Steam...');
-    try {
-        // ⚠️ СПИСОК ПРЕДМЕТОВ — ДОБАВЬТЕ ВСЕ СВОИ ПРЕДМЕТЫ
-        const items = [
-            'AK-47 | Redline (Field-Tested)',
-            'AWP | Dragon Lore (Factory New)',
-            'M4A4 | Howl (Factory New)',
-            '★ Butterfly Knife | Fade (Factory New)',
-            '★ Karambit | Doppler (Factory New)',
-            'AK-47 | Fire Serpent (Minimal Wear)',
-            'AWP | Medusa (Well-Worn)',
-            // ДОБАВЬТЕ СЮДА ВСЕ ПРЕДМЕТЫ ИЗ ВАШИХ КЕЙСОВ
-        ];
-        
-        let successCount = 0;
-        let failCount = 0;
-        
-        for (const itemName of items) {
-            try {
-                // ===== ЗАДЕРЖКА 3 СЕКУНДЫ МЕЖДУ ЗАПРОСАМИ =====
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                
-                const response = await axios.get(
-                    'https://steamcommunity.com/market/priceoverview/',
-                    {
-                        params: {
-                            appid: 730,
-                            currency: 'USD',
-                            market_hash_name: itemName
-                        }
-                    }
-                );
-
-                if (response.data && response.data.success) {
-                    const price = parseFloat(response.data.lowest_price.replace('$', '').trim());
-                    
-                    await pool.query(
-                        `INSERT INTO steam_prices (item_name, market_hash_name, price, updated_at) 
-                         VALUES ($1, $2, $3, NOW()) 
-                         ON CONFLICT (item_name) 
-                         DO UPDATE SET price = $3, updated_at = NOW()`,
-                        [itemName, itemName, price]
-                    );
-                    
-                    console.log(`✅ Цена обновлена: ${itemName} → $${price}`);
-                    successCount++;
-                }
-            } catch (error) {
-                console.error(`❌ Ошибка обновления ${itemName}:`, error.message);
-                failCount++;
-            }
-        }
-        
-        console.log(`📊 Обновление цен завершено: успешно ${successCount}, ошибок ${failCount}`);
-    } catch (error) {
-        console.error('❌ Ошибка обновления цен:', error.message);
-    }
-}
-
-// ===== ФУНКЦИЯ ПОЛУЧЕНИЯ ЦЕНЫ ИЗ КЭША =====
-async function getCachedPrice(itemName) {
-    const result = await pool.query(
-        'SELECT price, updated_at FROM steam_prices WHERE item_name = $1',
-        [itemName]
-    );
-    
-    if (result.rows.length === 0) {
-        console.log(`⚠️ Цена для ${itemName} не найдена в кэше`);
-        return 0;
-    }
-    
-    return result.rows[0].price;
-}
-
-// ===== ТЕСТОВЫЙ МАРШРУТ ДЛЯ ПРОВЕРКИ КЭША =====
-app.get("/api/price/:item", async (req, res) => {
-    try {
-        const price = await getCachedPrice(req.params.item);
-        res.json({ 
-            item: req.params.item, 
-            price: price,
-            cached: true 
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// =======================================================
 //  ОБРАБОТКА ОШИБОК
 // =======================================================
 
@@ -329,18 +209,7 @@ app.use((err, req, res, _next) => {
 
 async function startServer() {
     try {
-        // Создаём обе таблицы
         await createSessionTable();
-        await createSteamPricesTable();
-
-        // ===== ЗАПЛАНИРОВАННОЕ ОБНОВЛЕНИЕ ЦЕН (каждые 6 часов) =====
-        cron.schedule('0 */6 * * *', () => {
-            console.log('🕐 Запуск планового обновления цен...');
-            updateSteamPrices();
-        });
-
-        // Запускаем первое обновление при старте сервера
-        await updateSteamPrices();
 
         app.listen(PORT, () => {
             console.log(`✅ Steam auth server listening on ${BASE_URL} (port ${PORT})`);
