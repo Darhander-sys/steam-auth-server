@@ -39,7 +39,7 @@ if (!DATABASE_URL) {
 
 const app = express();
 
-// ===== CORS — РАЗРЕШАЕМ ЗАПРОСЫ С ВАШЕГО FRAMER САЙТА =====
+// ===== CORS =====
 app.use(cors({
     origin: CORS_ORIGIN || 'https://adored-monstera-794345.framer.app',
     credentials: true,
@@ -81,7 +81,7 @@ async function createSessionTable() {
     }
 }
 
-// ===== СЕССИИ В POSTGRESQL =====
+// ===== СЕССИИ =====
 app.use(
     session({
         store: new pgSession({
@@ -93,8 +93,8 @@ app.use(
         saveUninitialized: false,
         cookie: {
             httpOnly: true,
-            sameSite: "lax",
-            secure: false,
+            sameSite: "none",   // ← КРОСС-ДОМЕН
+            secure: true,       // ← ТРЕБУЕТ HTTPS
             maxAge: 1000 * 60 * 60 * 24 * 7,
         },
     })
@@ -176,8 +176,8 @@ function logoutHandler(req, res, next) {
             const cookieName = req.session?.cookie?.name || "connect.sid";
             res.clearCookie(cookieName, {
                 httpOnly: true,
-                sameSite: "lax",
-                secure: false,
+                sameSite: "none",
+                secure: true,
             });
             return res.json({ success: true });
         });
