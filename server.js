@@ -101,6 +101,8 @@ const sessionMiddleware = session({
         httpOnly: true,
         sameSite: "none",
         secure: true,
+        // ===== ДОБАВЛЯЕМ DOMAIN =====
+        domain: ".railway.app",  // ← ВАЖНО: точка перед доменом!
         maxAge: 1000 * 60 * 60 * 24 * 7,
     },
 });
@@ -164,11 +166,12 @@ app.get(
     (req, res) => {
         console.log('✅ Успешный вход! Пользователь:', req.user?.name);
         
-        // ===== ЯВНО СОХРАНЯЕМ СЕССИЮ ПЕРЕД РЕДИРЕКТОМ =====
+        // ===== ЯВНО СОХРАНЯЕМ СЕССИЮ =====
         req.session.save((err) => {
             if (err) {
                 console.error('❌ Ошибка сохранения сессии:', err);
             }
+            console.log('🔍 Сессия сохранена, ID:', req.session.id);
             res.redirect(FRONTEND_URL);
         });
     }
@@ -176,6 +179,7 @@ app.get(
 
 app.get("/api/auth/me", (req, res) => {
     console.log('🔍 Проверка аутентификации:', req.isAuthenticated?.());
+    console.log('🔍 Сессия ID:', req.session?.id);
     if (!req.isAuthenticated || !req.isAuthenticated()) {
         return res.status(401).json({ error: "Unauthorized" });
     }
@@ -193,6 +197,7 @@ function logoutHandler(req, res, next) {
                 httpOnly: true,
                 sameSite: "none",
                 secure: true,
+                domain: ".railway.app",
             });
             return res.json({ success: true });
         });
