@@ -35,7 +35,7 @@ if (!DATABASE_URL) {
 
 const app = express();
 
-// ===== ЛОГИРОВАНИЕ ВСЕХ ЗАПРОСОВ =====
+// ===== ЛОГИРОВАНИЕ =====
 app.use((req, res, next) => {
     console.log(`\n📥 ${req.method} ${req.path}`);
     console.log(`  Cookie: ${req.headers.cookie || 'нет'}`);
@@ -46,12 +46,10 @@ app.use((req, res, next) => {
     next();
 });
 
-// ===== CORS — РАЗРЕШАЕМ ВСЕ НУЖНЫЕ ДОМЕНЫ =====
+// ===== CORS =====
 app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
-        
-        // Разрешаем все поддомены framer.app и framercanvas.com
         if (origin.includes('framer.app') || 
             origin.includes('framercanvas.com') || 
             origin.includes('localhost') ||
@@ -78,7 +76,7 @@ const pool = new Pool({
 
 const pgSession = connectPgSimple(session);
 
-// ===== СЕССИИ =====
+// ===== СЕССИИ (С ОТКЛЮЧЁННЫМ SECURE ДЛЯ ТЕСТА) =====
 app.use(session({
     store: new pgSession({
         pool: pool,
@@ -90,9 +88,9 @@ app.use(session({
     saveUninitialized: false,
     cookie: {
         httpOnly: true,
-        sameSite: "none",
-        secure: true,
-        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 дней
+        sameSite: "lax",      // ← ИЗМЕНЕНО
+        secure: false,        // ← ИЗМЕНЕНО (для теста)
+        maxAge: 1000 * 60 * 60 * 24 * 7,
     },
 }));
 
@@ -118,7 +116,6 @@ passport.use(new SteamStrategy(
             balance: 0
         };
         
-        // Сохраняем пользователя в БД
         pool.query(
             `INSERT INTO users (id, name, avatar, balance) 
              VALUES ($1, $2, $3, $4) 
@@ -162,7 +159,6 @@ passport.deserializeUser((id, done) => {
 //  МАРШРУТЫ
 // =======================================================
 
-// === Начало авторизации ===
 app.get("/api/auth/steam", 
     (req, res, next) => {
         console.log('🔄 Начало авторизации');
@@ -171,7 +167,6 @@ app.get("/api/auth/steam",
     passport.authenticate("steam")
 );
 
-// === Возврат от Steam ===
 app.get("/api/auth/steam/return",
     (req, res, next) => {
         console.log('🔄 Возврат от Steam');
@@ -198,7 +193,6 @@ app.get("/api/auth/steam/return",
             
             console.log('✅ Сессия сохранена!');
             
-            // Проверяем в БД
             pool.query('SELECT * FROM "session" WHERE sid = $1', [req.session.id])
                 .then(result => {
                     console.log('  Сессия в БД:', result.rows.length > 0 ? '✅ есть' : '❌ нет');
@@ -211,7 +205,6 @@ app.get("/api/auth/steam/return",
     }
 );
 
-// === Проверка сессии ===
 app.get("/api/auth/me", (req, res) => {
     console.log('🔍 /api/auth/me');
     console.log('  isAuthenticated:', req.isAuthenticated?.());
@@ -227,7 +220,6 @@ app.get("/api/auth/me", (req, res) => {
     res.json(req.user);
 });
 
-// === Детальная проверка сессии (для отладки) ===
 app.get("/api/auth/check-session", (req, res) => {
     console.log('🔍 /api/auth/check-session');
     console.log('  session.id:', req.session?.id);
@@ -244,7 +236,6 @@ app.get("/api/auth/check-session", (req, res) => {
     });
 });
 
-// === Выход ===
 app.post("/api/auth/logout", (req, res) => {
     console.log('🚪 Выход');
     req.logout((err) => {
@@ -253,22 +244,17 @@ app.post("/api/auth/logout", (req, res) => {
             if (err) return res.status(500).json({ error: err.message });
             res.clearCookie('connect.sid', {
                 httpOnly: true,
-                sameSite: "none",
-                secure: true,
+                sameSite: "lax",
+                secure: false,
             });
             res.json({ success: true });
         });
     });
 });
 
-// === Health check ===
 app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
-
-// =======================================================
-//  ОБРАБОТКА ОШИБОК
-// =======================================================
 
 app.use((req, res) => {
     console.log(`❌ 404: ${req.method} ${req.path}`);
@@ -287,7 +273,6 @@ app.use((err, req, res, next) => {
 
 async function startServer() {
     try {
-        // Создаём таблицу users
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id VARCHAR(255) PRIMARY KEY,
@@ -298,7 +283,6 @@ async function startServer() {
         `);
         console.log('✅ Таблица users готова');
         
-        // Создаём таблицу session (если ещё нет)
         await pool.query(`
             CREATE TABLE IF NOT EXISTS "session" (
                 "sid" varchar NOT NULL,
