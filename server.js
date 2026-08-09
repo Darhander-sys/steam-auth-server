@@ -76,7 +76,7 @@ const pool = new Pool({
 
 const pgSession = connectPgSimple(session);
 
-// ===== СЕССИИ (С SECURE: TRUE И SAMESITE: NONE) =====
+// ===== СЕССИИ =====
 app.use(session({
     store: new pgSession({
         pool: pool,
@@ -88,9 +88,9 @@ app.use(session({
     saveUninitialized: false,
     cookie: {
         httpOnly: true,
-        sameSite: "none",   // ← ДЛЯ КРОСС-ДОМЕННЫХ ЗАПРОСОВ
-        secure: true,       // ← ТОЛЬКО ПО HTTPS
-        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 дней
+        sameSite: "none",
+        secure: true,
+        maxAge: 1000 * 60 * 60 * 24 * 7,
     },
 }));
 
@@ -156,7 +156,7 @@ passport.deserializeUser((id, done) => {
 });
 
 // =======================================================
-//  МАРШРУТЫ
+//  МАРШРУТЫ АВТОРИЗАЦИИ
 // =======================================================
 
 app.get("/api/auth/steam", 
@@ -252,9 +252,212 @@ app.post("/api/auth/logout", (req, res) => {
     });
 });
 
+// =======================================================
+//  API ДЛЯ РАБОТЫ С КЕЙСАМИ
+// =======================================================
+
+// === Получить список всех активных кейсов ===
+app.get("/api/cases", async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT id, name, price, image, is_active 
+             FROM cases 
+             WHERE is_active = true 
+             ORDER BY id`
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error("❌ Ошибка получения кейсов:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+// === Получить предметы из кейса ===
+app.get("/api/cases/:id/items", async (req, res) => {
+    try {
+        const caseId = req.params.id;
+        const result = await pool.query(
+            `SELECT id, name, image, rarity, chance 
+             FROM case_items 
+             WHERE case_id = $1 
+             ORDER BY chance DESC`,
+            [caseId]
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error("❌ Ошибка получения предметов:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+// === Открыть кейс ===
+app.post("/api/cases/:id/open", async (req, res) => {
+    try {
+        // Проверяем, авторизован ли пользователь
+        if (!req.isAuthenticated || !req.isAuthenticated()) {
+            return res.status(401).json({ error: "Unauthorized" });
+        }
+
+        const userId = req.user.id;
+        const caseId = parseInt(req.params.id);
+
+        // 1. Получаем информацию о кейсе
+        const caseResult = await pool.query(
+            `SELECT id, name, price FROM cases WHERE id = $1 AND is_active = true`,
+            [caseId]
+        );
+
+        if (caseResult.rows.length === 0) {
+            return res.status(404).json({ error: "Case not found or inactive" });
+        }
+
+        const caseData = caseResult.rows[0];
+        const price = parseFloat(caseData.price);
+
+        // 2. Проверяем баланс пользователя
+        const userResult = await pool.query(
+            `SELECT balance FROM users WHERE id = $1`,
+            [userId]
+        );
+
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        const currentBalance = parseFloat(userResult.rows[0].balance);
+
+        if (currentBalance < price) {
+            return res.status(400).json({ 
+                error: "Insufficient balance", 
+                balance: currentBalance,
+                required: price
+            });
+        }
+
+        // 3. Получаем все предметы из кейса с шансами
+        const itemsResult = await pool.query(
+            `SELECT id, name, image, rarity, chance 
+             FROM case_items 
+             WHERE case_id = $1`,
+            [caseId]
+        );
+
+        if (itemsResult.rows.length === 0) {
+            return res.status(404).json({ error: "No items in this case" });
+        }
+
+        // 4. Выбираем предмет по шансам
+        const items = itemsResult.rows;
+        const random = Math.random();
+        let cumulative = 0;
+        let selectedItem = null;
+
+        for (const item of items) {
+            cumulative += parseFloat(item.chance);
+            if (random <= cumulative) {
+                selectedItem = item;
+                break;
+            }
+        }
+
+        // На случай, если ничего не выбралось (баг)
+        if (!selectedItem) {
+            selectedItem = items[items.length - 1];
+        }
+
+        // 5. Списываем деньги с баланса
+        const newBalance = currentBalance - price;
+        await pool.query(
+            `UPDATE users SET balance = $1 WHERE id = $2`,
+            [newBalance, userId]
+        );
+
+        // 6. Добавляем предмет в инвентарь пользователя
+        await pool.query(
+            `INSERT INTO user_inventory (user_id, item_name, item_image, rarity) 
+             VALUES ($1, $2, $3, $4)`,
+            [userId, selectedItem.name, selectedItem.image, selectedItem.rarity]
+        );
+
+        // 7. Сохраняем историю открытия
+        await pool.query(
+            `INSERT INTO user_cases_history (user_id, case_id, item_id) 
+             VALUES ($1, $2, $3)`,
+            [userId, caseId, selectedItem.id]
+        );
+
+        // 8. Возвращаем результат
+        res.json({
+            success: true,
+            case: caseData.name,
+            item: {
+                id: selectedItem.id,
+                name: selectedItem.name,
+                image: selectedItem.image,
+                rarity: selectedItem.rarity
+            },
+            balance: newBalance,
+            price: price
+        });
+
+    } catch (error) {
+        console.error("❌ Ошибка открытия кейса:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+// === Получить инвентарь пользователя ===
+app.get("/api/user/inventory", async (req, res) => {
+    try {
+        if (!req.isAuthenticated || !req.isAuthenticated()) {
+            return res.status(401).json({ error: "Unauthorized" });
+        }
+
+        const userId = req.user.id;
+        const result = await pool.query(
+            `SELECT id, item_name, item_image, rarity, received_at 
+             FROM user_inventory 
+             WHERE user_id = $1 
+             ORDER BY received_at DESC`,
+            [userId]
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error("❌ Ошибка получения инвентаря:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+// === Получить баланс пользователя ===
+app.get("/api/user/balance", async (req, res) => {
+    try {
+        if (!req.isAuthenticated || !req.isAuthenticated()) {
+            return res.status(401).json({ error: "Unauthorized" });
+        }
+
+        const userId = req.user.id;
+        const result = await pool.query(
+            `SELECT balance FROM users WHERE id = $1`,
+            [userId]
+        );
+        res.json({ balance: parseFloat(result.rows[0].balance) });
+    } catch (error) {
+        console.error("❌ Ошибка получения баланса:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+// =======================================================
+//  HEALTH CHECK
+// =======================================================
+
 app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
+
+// =======================================================
+//  ОБРАБОТКА ОШИБОК
+// =======================================================
 
 app.use((req, res) => {
     console.log(`❌ 404: ${req.method} ${req.path}`);
@@ -268,21 +471,23 @@ app.use((err, req, res, next) => {
 });
 
 // =======================================================
-//  ЗАПУСК
+//  ЗАПУСК СЕРВЕРА
 // =======================================================
 
 async function startServer() {
     try {
+        // Создаём таблицу users
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id VARCHAR(255) PRIMARY KEY,
                 name VARCHAR(255) NOT NULL,
                 avatar VARCHAR(500),
-                balance INTEGER DEFAULT 0
+                balance DECIMAL(10, 2) DEFAULT 0
             );
         `);
         console.log('✅ Таблица users готова');
         
+        // Создаём таблицу session
         await pool.query(`
             CREATE TABLE IF NOT EXISTS "session" (
                 "sid" varchar NOT NULL,
@@ -296,10 +501,60 @@ async function startServer() {
         `);
         console.log('✅ Таблица session готова');
         
+        // Создаём таблицы для кейсов
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS cases (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                price DECIMAL(10, 2) NOT NULL,
+                image VARCHAR(500),
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        `);
+        console.log('✅ Таблица cases готова');
+        
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS case_items (
+                id SERIAL PRIMARY KEY,
+                case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
+                name VARCHAR(255) NOT NULL,
+                image VARCHAR(500),
+                rarity VARCHAR(50) NOT NULL,
+                chance DECIMAL(5, 4) NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        `);
+        console.log('✅ Таблица case_items готова');
+        
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS user_inventory (
+                id SERIAL PRIMARY KEY,
+                user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+                item_name VARCHAR(255) NOT NULL,
+                item_image VARCHAR(500),
+                rarity VARCHAR(50) NOT NULL,
+                received_at TIMESTAMP DEFAULT NOW()
+            );
+        `);
+        console.log('✅ Таблица user_inventory готова');
+        
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS user_cases_history (
+                id SERIAL PRIMARY KEY,
+                user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+                case_id INTEGER REFERENCES cases(id),
+                item_id INTEGER REFERENCES case_items(id),
+                opened_at TIMESTAMP DEFAULT NOW()
+            );
+        `);
+        console.log('✅ Таблица user_cases_history готова');
+        
         app.listen(PORT, () => {
             console.log(`✅ Сервер запущен на ${BASE_URL}`);
             console.log(`🔗 Steam: ${BASE_URL}/api/auth/steam`);
             console.log(`🔗 Фронтенд: ${FRONTEND_URL}`);
+            console.log(`🔗 Кейсы: ${BASE_URL}/api/cases`);
         });
     } catch (error) {
         console.error('❌ Ошибка запуска:', error);
