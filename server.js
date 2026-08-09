@@ -73,7 +73,7 @@ const pool = new Pool({
 
 const pgSession = connectPgSimple(session);
 
-// ===== СЕССИИ =====
+// ===== СЕССИИ (БЕЗ DOMAIN!) =====
 app.use(session({
     store: new pgSession({
         pool: pool,
@@ -87,7 +87,7 @@ app.use(session({
         httpOnly: true,
         sameSite: "none",
         secure: true,
-        domain: ".railway.app",
+        // domain: ".railway.app", ← УДАЛЕНО!
         maxAge: 1000 * 60 * 60 * 24 * 7,
     },
 }));
@@ -251,7 +251,6 @@ app.post("/api/auth/logout", (req, res) => {
                 httpOnly: true,
                 sameSite: "none",
                 secure: true,
-                domain: ".railway.app",
             });
             res.json({ success: true });
         });
