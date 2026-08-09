@@ -35,7 +35,7 @@ if (!DATABASE_URL) {
 
 const app = express();
 
-// ===== ЛОГИРОВАНИЕ =====
+// ===== ЛОГИРОВАНИЕ ВСЕХ ЗАПРОСОВ =====
 app.use((req, res, next) => {
     console.log(`\n📥 ${req.method} ${req.path}`);
     console.log(`  Cookie: ${req.headers.cookie || 'нет'}`);
@@ -46,11 +46,16 @@ app.use((req, res, next) => {
     next();
 });
 
-// ===== CORS =====
+// ===== CORS — РАЗРЕШАЕМ ВСЕ НУЖНЫЕ ДОМЕНЫ =====
 app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
-        if (origin.includes('framer.app') || origin.includes('railway.app') || origin.includes('localhost')) {
+        
+        // Разрешаем все поддомены framer.app и framercanvas.com
+        if (origin.includes('framer.app') || 
+            origin.includes('framercanvas.com') || 
+            origin.includes('localhost') ||
+            origin.includes('railway.app')) {
             console.log('✅ CORS разрешён для:', origin);
             callback(null, true);
         } else {
@@ -73,7 +78,7 @@ const pool = new Pool({
 
 const pgSession = connectPgSimple(session);
 
-// ===== СЕССИИ (БЕЗ DOMAIN!) =====
+// ===== СЕССИИ =====
 app.use(session({
     store: new pgSession({
         pool: pool,
@@ -87,8 +92,7 @@ app.use(session({
         httpOnly: true,
         sameSite: "none",
         secure: true,
-        // domain: ".railway.app", ← УДАЛЕНО!
-        maxAge: 1000 * 60 * 60 * 24 * 7,
+        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 дней
     },
 }));
 
@@ -158,6 +162,7 @@ passport.deserializeUser((id, done) => {
 //  МАРШРУТЫ
 // =======================================================
 
+// === Начало авторизации ===
 app.get("/api/auth/steam", 
     (req, res, next) => {
         console.log('🔄 Начало авторизации');
@@ -166,6 +171,7 @@ app.get("/api/auth/steam",
     passport.authenticate("steam")
 );
 
+// === Возврат от Steam ===
 app.get("/api/auth/steam/return",
     (req, res, next) => {
         console.log('🔄 Возврат от Steam');
@@ -184,7 +190,6 @@ app.get("/api/auth/steam/return",
         console.log('  Session ID:', req.session.id);
         console.log('  Session Passport:', JSON.stringify(req.session.passport));
         
-        // ПРИНУДИТЕЛЬНО СОХРАНЯЕМ СЕССИЮ
         req.session.save((err) => {
             if (err) {
                 console.error('❌ Ошибка сохранения сессии:', err);
@@ -192,15 +197,11 @@ app.get("/api/auth/steam/return",
             }
             
             console.log('✅ Сессия сохранена!');
-            console.log('  Проверка после сохранения:', JSON.stringify(req.session.passport));
             
             // Проверяем в БД
             pool.query('SELECT * FROM "session" WHERE sid = $1', [req.session.id])
                 .then(result => {
                     console.log('  Сессия в БД:', result.rows.length > 0 ? '✅ есть' : '❌ нет');
-                    if (result.rows.length > 0) {
-                        console.log('  Содержимое сессии:', JSON.stringify(result.rows[0].sess).substring(0, 200));
-                    }
                 })
                 .catch(err => console.error('  Ошибка проверки БД:', err));
             
@@ -210,6 +211,7 @@ app.get("/api/auth/steam/return",
     }
 );
 
+// === Проверка сессии ===
 app.get("/api/auth/me", (req, res) => {
     console.log('🔍 /api/auth/me');
     console.log('  isAuthenticated:', req.isAuthenticated?.());
@@ -225,6 +227,7 @@ app.get("/api/auth/me", (req, res) => {
     res.json(req.user);
 });
 
+// === Детальная проверка сессии (для отладки) ===
 app.get("/api/auth/check-session", (req, res) => {
     console.log('🔍 /api/auth/check-session');
     console.log('  session.id:', req.session?.id);
@@ -241,6 +244,7 @@ app.get("/api/auth/check-session", (req, res) => {
     });
 });
 
+// === Выход ===
 app.post("/api/auth/logout", (req, res) => {
     console.log('🚪 Выход');
     req.logout((err) => {
@@ -257,8 +261,24 @@ app.post("/api/auth/logout", (req, res) => {
     });
 });
 
+// === Health check ===
 app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// =======================================================
+//  ОБРАБОТКА ОШИБОК
+// =======================================================
+
+app.use((req, res) => {
+    console.log(`❌ 404: ${req.method} ${req.path}`);
+    res.status(404).json({ error: "Not found" });
+});
+
+app.use((err, req, res, next) => {
+    console.error("❌ Server error:", err);
+    if (res.headersSent) return next(err);
+    res.status(500).json({ error: err.message });
 });
 
 // =======================================================
@@ -267,7 +287,7 @@ app.get("/api/health", (req, res) => {
 
 async function startServer() {
     try {
-        // Создаём таблицы
+        // Создаём таблицу users
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id VARCHAR(255) PRIMARY KEY,
@@ -278,13 +298,27 @@ async function startServer() {
         `);
         console.log('✅ Таблица users готова');
         
+        // Создаём таблицу session (если ещё нет)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS "session" (
+                "sid" varchar NOT NULL,
+                "sess" json NOT NULL,
+                "expire" timestamp(6) NOT NULL,
+                CONSTRAINT "session_pkey" PRIMARY KEY ("sid")
+            );
+        `);
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
+        `);
+        console.log('✅ Таблица session готова');
+        
         app.listen(PORT, () => {
             console.log(`✅ Сервер запущен на ${BASE_URL}`);
             console.log(`🔗 Steam: ${BASE_URL}/api/auth/steam`);
             console.log(`🔗 Фронтенд: ${FRONTEND_URL}`);
         });
     } catch (error) {
-        console.error('❌ Ошибка:', error);
+        console.error('❌ Ошибка запуска:', error);
         process.exit(1);
     }
 }
