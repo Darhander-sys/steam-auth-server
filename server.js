@@ -244,7 +244,7 @@ app.post("/api/auth/logout", (req, res) => {
             if (err) return res.status(500).json({ error: err.message });
             res.clearCookie('connect.sid', {
                 httpOnly: true,
-                sameSite: "lax",
+                sameSite: "none",
                 secure: false,
             });
             res.json({ success: true });
