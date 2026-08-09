@@ -76,7 +76,7 @@ const pool = new Pool({
 
 const pgSession = connectPgSimple(session);
 
-// ===== СЕССИИ (С ОТКЛЮЧЁННЫМ SECURE ДЛЯ ТЕСТА) =====
+// ===== СЕССИИ (С SECURE: TRUE И SAMESITE: NONE) =====
 app.use(session({
     store: new pgSession({
         pool: pool,
@@ -88,9 +88,9 @@ app.use(session({
     saveUninitialized: false,
     cookie: {
         httpOnly: true,
-        sameSite: "none",      // ← ИЗМЕНЕНО
-        secure: false,        // ← ИЗМЕНЕНО (для теста)
-        maxAge: 1000 * 60 * 60 * 24 * 7,
+        sameSite: "none",   // ← ДЛЯ КРОСС-ДОМЕННЫХ ЗАПРОСОВ
+        secure: true,       // ← ТОЛЬКО ПО HTTPS
+        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 дней
     },
 }));
 
@@ -245,7 +245,7 @@ app.post("/api/auth/logout", (req, res) => {
             res.clearCookie('connect.sid', {
                 httpOnly: true,
                 sameSite: "none",
-                secure: false,
+                secure: true,
             });
             res.json({ success: true });
         });
