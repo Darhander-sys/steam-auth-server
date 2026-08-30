@@ -90,25 +90,44 @@ const pool = new Pool({
 
 const pgSession = connectPgSimple(session);
 
-// ===== СЕССИИ (ИЗМЕНЕНО) =====
+// ============================================================
+//  ⬇️⬇️⬇️ СЕССИИ (НОВЫЙ БЛОК) ⬇️⬇️⬇️
+// ============================================================
+const sessionStore = new pgSession({
+    pool: pool,
+    tableName: "session",
+    createTableIfMissing: true,
+});
+
 app.use(session({
-    store: new pgSession({
-        pool: pool,
-        tableName: "session",
-        createTableIfMissing: true,
-    }),
+    store: sessionStore,
     secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: true,  // ← ИЗМЕНЕНО С false НА true
+    resave: true,
+    saveUninitialized: false,
     cookie: {
         httpOnly: true,
-        sameSite: "lax",       // ← ИЗМЕНЕНО С "none" НА "lax"
+        sameSite: "lax",
         secure: true,
         domain: ".cs2dep.online",
         maxAge: 1000 * 60 * 60 * 24 * 7,
     },
-    name: 'connect.sid'        // ← ДОБАВЛЕНО
+    name: 'connect.sid',
+    rolling: true,
 }));
+// ============================================================
+
+// ============================================================
+//  ⬇️⬇️⬇️ MIDDLEWARE ДЛЯ ЛОГИРОВАНИЯ СЕССИИ ⬇️⬇️⬇️
+// ============================================================
+app.use((req, res, next) => {
+    console.log('🔍 СЕССИЯ:');
+    console.log('  Cookie ID:', req.headers.cookie?.match(/connect\.sid=([^;]+)/)?.[1] || 'нет');
+    console.log('  Session ID:', req.session?.id || 'нет');
+    console.log('  Session Passport:', JSON.stringify(req.session?.passport || 'нет'));
+    console.log('  Session Store:', req.session?.store ? 'есть' : 'нет');
+    next();
+});
+// ============================================================
 
 app.use(passport.initialize());
 app.use(passport.session());
@@ -183,7 +202,9 @@ app.get("/api/auth/steam",
     passport.authenticate("steam")
 );
 
-// ===== ЭТОТ БЛОК ИЗМЕНЁН (ДОБАВЛЕНА ПРИНУДИТЕЛЬНАЯ УСТАНОВКА КУКИ) =====
+// ============================================================
+//  ⬇️⬇️⬇️ МАРШРУТ /api/auth/steam/return (НОВЫЙ) ⬇️⬇️⬇️
+// ============================================================
 app.get("/api/auth/steam/return",
     (req, res, next) => {
         console.log('🔄 Возврат от Steam');
@@ -202,26 +223,27 @@ app.get("/api/auth/steam/return",
         console.log('  Session ID:', req.session.id);
         console.log('  Session Passport:', JSON.stringify(req.session.passport));
         
-        // ⭐⭐⭐ ПРИНУДИТЕЛЬНАЯ УСТАНОВКА КУКИ ⭐⭐⭐
-        res.cookie('connect.sid', req.session.id, {
-            httpOnly: true,
-            secure: true,
-            sameSite: 'lax',
-            domain: '.cs2dep.online',
-            maxAge: 1000 * 60 * 60 * 24 * 7,
-            path: '/'
-        });
-        console.log('🍪 Кука ПРИНУДИТЕЛЬНО установлена:', req.session.id);
-        // ⭐⭐⭐ КОНЕЦ БЛОКА ⭐⭐⭐
-        
+        // Сохраняем сессию ПЕРЕД установкой куки
         req.session.save((err) => {
             if (err) {
                 console.error('❌ Ошибка сохранения сессии:', err);
                 return res.redirect(FRONTEND_URL + '?error=session');
             }
             
-            console.log('✅ Сессия сохранена!');
+            console.log('✅ Сессия сохранена с ID:', req.session.id);
             
+            // Теперь устанавливаем куку ПОСЛЕ сохранения
+            res.cookie('connect.sid', req.session.id, {
+                httpOnly: true,
+                secure: true,
+                sameSite: 'lax',
+                domain: '.cs2dep.online',
+                maxAge: 1000 * 60 * 60 * 24 * 7,
+                path: '/'
+            });
+            console.log('🍪 Кука установлена с ID:', req.session.id);
+            
+            // Проверяем в БД
             pool.query('SELECT * FROM "session" WHERE sid = $1', [req.session.id])
                 .then(result => {
                     console.log('  Сессия в БД:', result.rows.length > 0 ? '✅ есть' : '❌ нет');
@@ -233,8 +255,8 @@ app.get("/api/auth/steam/return",
         });
     }
 );
+// ============================================================
 
-// ===== ВСЁ ОСТАЛЬНОЕ БЕЗ ИЗМЕНЕНИЙ =====
 app.get("/api/auth/me", (req, res) => {
     console.log('🔍 /api/auth/me');
     console.log('  isAuthenticated:', req.isAuthenticated?.());
@@ -284,7 +306,7 @@ app.post("/api/auth/logout", (req, res) => {
 });
 
 // =======================================================
-//  API ДЛЯ РАБОТЫ С КЕЙСАМИ (БЕЗ ИЗМЕНЕНИЙ)
+//  API ДЛЯ РАБОТЫ С КЕЙСАМИ
 // =======================================================
 
 app.get("/api/cases", async (req, res) => {
