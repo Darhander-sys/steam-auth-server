@@ -50,16 +50,25 @@ app.use((req, res, next) => {
 app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
+        
+        // Разрешаем все поддомены framer.app, framercanvas.com, railway.app и localhost
         if (origin.includes('framer.app') || 
             origin.includes('framercanvas.com') || 
             origin.includes('localhost') ||
             origin.includes('railway.app')) {
             console.log('✅ CORS разрешён для:', origin);
-            callback(null, true);
-        } else {
-            console.log('❌ CORS заблокирован для:', origin);
-            callback(new Error('Not allowed by CORS'));
+            return callback(null, true);
         }
+        
+        // ===== ДОБАВЛЯЕМ ВАШ ДОМЕН =====
+        if (origin === 'https://cs2dep.online' || 
+            origin === 'https://www.cs2dep.online') {
+            console.log('✅ CORS разрешён для:', origin);
+            return callback(null, true);
+        }
+        
+        console.log('❌ CORS заблокирован для:', origin);
+        callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
