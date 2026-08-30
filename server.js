@@ -51,6 +51,7 @@ app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
         
+        // Список разрешённых доменов
         const allowed = [
             'https://cs2dep.online',
             'https://www.cs2dep.online',
@@ -59,9 +60,16 @@ app.use(cors({
             'http://localhost:3000',
         ];
         
-        if (allowed.includes(origin) || 
-            origin.includes('framer.app') || 
-            origin.includes('railway.app')) {
+        // Разрешаем ВСЕ поддомены Framer
+        if (origin.includes('framer.app') || 
+            origin.includes('framercanvas.com') || 
+            origin.includes('framer.work') ||
+            origin.includes('framercanvas.net')) {
+            console.log('✅ CORS разрешён для Framer:', origin);
+            return callback(null, true);
+        }
+        
+        if (allowed.includes(origin) || origin.includes('railway.app')) {
             console.log('✅ CORS разрешён для:', origin);
             return callback(null, true);
         }
