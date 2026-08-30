@@ -123,7 +123,7 @@ app.use(session({
     cookie: {
         httpOnly: true,
         secure: true,
-        sameSite: "lax",
+        sameSite: "none",
         domain: ".cs2dep.online",
         path: "/",
         maxAge: 1000 * 60 * 60 * 24 * 7,
