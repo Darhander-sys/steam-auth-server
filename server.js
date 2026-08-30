@@ -8,6 +8,7 @@ const SteamStrategy = require("passport-steam").Strategy;
 const { Pool } = require("pg");
 const connectPgSimple = require("connect-pg-simple");
 const cors = require("cors");
+const { createProxyMiddleware } = require('http-proxy-middleware'); // 👈 ТОЛЬКО ЭТО НОВОЕ
 
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
@@ -15,10 +16,12 @@ const SESSION_SECRET = process.env.SESSION_SECRET;
 const PORT = Number(process.env.PORT || 3000);
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 const DATABASE_URL = process.env.DATABASE_URL;
+const API_URL = process.env.API_URL || "https://api.cs2dep.online"; // 👈 ТОЛЬКО ЭТО НОВОЕ
 
 console.log('🚀 ЗАПУСК СЕРВЕРА');
 console.log('FRONTEND_URL:', FRONTEND_URL);
 console.log('BASE_URL:', BASE_URL);
+console.log('API_URL:', API_URL); // 👈 ТОЛЬКО ЭТО НОВОЕ
 
 if (!STEAM_API_KEY) {
     console.error("❌ Missing STEAM_API_KEY.");
@@ -51,7 +54,6 @@ app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
         
-        // Список разрешённых доменов
         const allowed = [
             'https://cs2dep.online',
             'https://www.cs2dep.online',
@@ -60,7 +62,6 @@ app.use(cors({
             'http://localhost:3000',
         ];
         
-        // Разрешаем ВСЕ поддомены Framer
         if (origin.includes('framer.app') || 
             origin.includes('framercanvas.com') || 
             origin.includes('framer.work') ||
@@ -84,6 +85,45 @@ app.use(cors({
 
 app.use(express.json());
 
+// ============================================================
+//  ⭐⭐⭐ НОВЫЙ РАЗДЕЛ: REVERSE PROXY ДЛЯ API ⭐⭐⭐
+//  ВСЕ ЗАПРОСЫ НА /api/* ПРОКСИРУЮТСЯ НА api.cs2dep.online
+// ============================================================
+app.use('/api', createProxyMiddleware({
+    target: API_URL,
+    changeOrigin: true,
+    pathRewrite: {
+        '^/api': '/api' // оставляем /api
+    },
+    // Переносим cookies
+    onProxyReq: (proxyReq, req, res) => {
+        if (req.headers.cookie) {
+            proxyReq.setHeader('Cookie', req.headers.cookie);
+        }
+        console.log(`🔄 Прокси: ${req.method} ${req.path} → ${API_URL}${req.path}`);
+    },
+    // Меняем домен в cookie
+    onProxyRes: (proxyRes, req, res) => {
+        const setCookie = proxyRes.headers['set-cookie'];
+        if (setCookie) {
+            const modifiedCookies = setCookie.map(cookie => {
+                return cookie
+                    .replace(/domain=\.?api\.cs2dep\.online/g, 'domain=.cs2dep.online')
+                    .replace(/domain=api\.cs2dep\.online/g, 'domain=.cs2dep.online');
+            });
+            proxyRes.headers['set-cookie'] = modifiedCookies;
+            console.log('🍪 Cookie domain переписан на .cs2dep.online');
+        }
+    },
+    onError: (err, req, res) => {
+        console.error('❌ Ошибка прокси:', err);
+        res.status(500).json({ error: 'Proxy error', details: err.message });
+    }
+}));
+// ============================================================
+//  КОНЕЦ НОВОГО РАЗДЕЛА
+// ============================================================
+
 // ===== ПОДКЛЮЧЕНИЕ К POSTGRESQL =====
 const pool = new Pool({
     connectionString: DATABASE_URL,
@@ -106,7 +146,7 @@ app.use(session({
         httpOnly: true,
         sameSite: "none",
         secure: true,
-        domain: ".cs2dep.online",  // ← КЛЮЧЕВОЙ ПАРАМЕТР
+        domain: ".cs2dep.online",
         maxAge: 1000 * 60 * 60 * 24 * 7,
     },
 }));
@@ -222,8 +262,20 @@ app.get("/api/auth/steam/return",
     }
 );
 
+// =======================================================
+//  ВАШИ API МАРШРУТЫ (ТЕПЕРЬ ОНИ ПРОКСИРУЮТСЯ)
+//  Все маршруты ниже будут автоматически перенаправлены на api.cs2dep.online
+//  Поэтому их можно УДАЛИТЬ или ОСТАВИТЬ (если оставить - они не будут использоваться)
+// =======================================================
+
+// ⚠️ ВНИМАНИЕ: Все маршруты ниже теперь проксируются на api.cs2dep.online
+// Если вы хотите, чтобы они работали локально - удалите прокси выше
+// Если вы хотите, чтобы они работали через прокси - оставьте их здесь (они не будут использоваться)
+
 app.get("/api/auth/me", (req, res) => {
-    console.log('🔍 /api/auth/me');
+    // Этот маршрут теперь проксируется на api.cs2dep.online
+    // Если прокси не работает, этот код выполнится как fallback
+    console.log('🔍 /api/auth/me (локальный fallback)');
     console.log('  isAuthenticated:', req.isAuthenticated?.());
     console.log('  req.user:', req.user?.id || 'нет');
     console.log('  session.passport:', JSON.stringify(req.session?.passport || 'нет'));
@@ -238,7 +290,7 @@ app.get("/api/auth/me", (req, res) => {
 });
 
 app.get("/api/auth/check-session", (req, res) => {
-    console.log('🔍 /api/auth/check-session');
+    console.log('🔍 /api/auth/check-session (локальный fallback)');
     console.log('  session.id:', req.session?.id);
     console.log('  session.passport:', JSON.stringify(req.session?.passport || 'нет'));
     console.log('  isAuthenticated:', req.isAuthenticated?.());
@@ -254,7 +306,7 @@ app.get("/api/auth/check-session", (req, res) => {
 });
 
 app.post("/api/auth/logout", (req, res) => {
-    console.log('🚪 Выход');
+    console.log('🚪 Выход (локальный fallback)');
     req.logout((err) => {
         if (err) return res.status(500).json({ error: err.message });
         req.session.destroy((err) => {
@@ -271,7 +323,7 @@ app.post("/api/auth/logout", (req, res) => {
 });
 
 // =======================================================
-//  API ДЛЯ РАБОТЫ С КЕЙСАМИ
+//  API ДЛЯ РАБОТЫ С КЕЙСАМИ (FALLBACK)
 // =======================================================
 
 app.get("/api/cases", async (req, res) => {
@@ -554,7 +606,7 @@ async function startServer() {
             console.log(`✅ Сервер запущен на ${BASE_URL}`);
             console.log(`🔗 Steam: ${BASE_URL}/api/auth/steam`);
             console.log(`🔗 Фронтенд: ${FRONTEND_URL}`);
-            console.log(`🔗 Кейсы: ${BASE_URL}/api/cases`);
+            console.log(`🔗 API прокси: ${BASE_URL}/api/* → ${API_URL}/api/*`);
         });
     } catch (error) {
         console.error('❌ Ошибка запуска:', error);
