@@ -101,14 +101,15 @@ app.use(session({
     }),
     secret: SESSION_SECRET,
     resave: false,
-    saveUninitialized: false,
+    saveUninitialized: true,  // ← ИЗМЕНЕНО
     cookie: {
         httpOnly: true,
-        sameSite: "none",
+        sameSite: "lax",       // ← ИЗМЕНЕНО С "none" НА "lax"
         secure: true,
-        domain: ".cs2dep.online",  // ← КЛЮЧЕВОЙ ПАРАМЕТР
+        domain: ".cs2dep.online",
         maxAge: 1000 * 60 * 60 * 24 * 7,
     },
+    name: 'connect.sid'        // ← ДОБАВЛЕНО
 }));
 
 app.use(passport.initialize());
