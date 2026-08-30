@@ -1,7 +1,4 @@
 ```javascript
-// =======================================================
-// ЗАГРУЗКА ENV
-// =======================================================
 require("dotenv").config();
 
 const express = require("express");
@@ -15,82 +12,95 @@ const cors = require("cors");
 // =======================================================
 // CONFIG
 // =======================================================
+
 const STEAM_API_KEY = process.env.STEAM_API_KEY;
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
 const FRONTEND_URL =
     process.env.FRONTEND_URL || "http://localhost:5173";
 const SESSION_SECRET = process.env.SESSION_SECRET;
-const PORT = Number(process.env.PORT || 3000);
 const DATABASE_URL = process.env.DATABASE_URL;
+const PORT = Number(process.env.PORT || 3000);
 
+console.log("========================================");
 console.log("🚀 ЗАПУСК СЕРВЕРА");
-console.log("FRONTEND_URL:", FRONTEND_URL);
+console.log("========================================");
 console.log("BASE_URL:", BASE_URL);
+console.log("FRONTEND_URL:", FRONTEND_URL);
+console.log("PORT:", PORT);
 
 // =======================================================
-// ENV CHECK
+// ENV VALIDATION
 // =======================================================
+
 if (!STEAM_API_KEY) {
-    console.error("❌ Missing STEAM_API_KEY");
+    console.error("❌ STEAM_API_KEY отсутствует");
     process.exit(1);
 }
 
 if (!SESSION_SECRET) {
-    console.error("❌ Missing SESSION_SECRET");
+    console.error("❌ SESSION_SECRET отсутствует");
     process.exit(1);
 }
 
 if (!DATABASE_URL) {
-    console.error("❌ Missing DATABASE_URL");
+    console.error("❌ DATABASE_URL отсутствует");
     process.exit(1);
 }
 
 // =======================================================
-// APP
+// EXPRESS
 // =======================================================
+
 const app = express();
 
-// Railway / reverse proxy
+// Railway работает через reverse proxy.
+// Это обязательно для secure cookies.
 app.set("trust proxy", 1);
 
 // =======================================================
 // CORS
 // =======================================================
+
+const allowedOrigins = [
+    "https://cs2dep.online",
+    "https://www.cs2dep.online",
+    "https://api.cs2dep.online",
+    "http://localhost:3000",
+    "http://localhost:5173",
+];
+
 app.use(
     cors({
         origin: function (origin, callback) {
+            // Запросы без Origin
             if (!origin) {
                 return callback(null, true);
             }
 
-            const allowed = [
-                "https://cs2dep.online",
-                "https://www.cs2dep.online",
-                "https://api.cs2dep.online",
-                "http://localhost:5173",
-                "http://localhost:3000",
-            ];
+            // Основные домены
+            if (allowedOrigins.includes(origin)) {
+                console.log("✅ CORS:", origin);
+                return callback(null, true);
+            }
 
+            // Framer preview
             if (
                 origin.includes("framer.app") ||
+                origin.includes("framer.website") ||
+                origin.includes("framer.com") ||
                 origin.includes("framercanvas.com") ||
                 origin.includes("framer.work") ||
                 origin.includes("framercanvas.net")
             ) {
-                console.log("✅ CORS разрешён для Framer:", origin);
+                console.log("✅ Framer CORS:", origin);
                 return callback(null, true);
             }
 
-            if (
-                allowed.includes(origin) ||
-                origin.includes("railway.app")
-            ) {
-                console.log("✅ CORS разрешён для:", origin);
-                return callback(null, true);
-            }
+            console.log("❌ CORS BLOCKED:", origin);
 
-            console.log("❌ CORS заблокирован для:", origin);
-            callback(new Error("Not allowed by CORS"));
+            return callback(
+                new Error("Not allowed by CORS")
+            );
         },
 
         credentials: true,
@@ -99,6 +109,7 @@ app.use(
             "GET",
             "POST",
             "PUT",
+            "PATCH",
             "DELETE",
             "OPTIONS",
         ],
@@ -116,6 +127,7 @@ app.use(express.json());
 // =======================================================
 // POSTGRESQL
 // =======================================================
+
 const pool = new Pool({
     connectionString: DATABASE_URL,
 
@@ -129,280 +141,259 @@ const pool = new Pool({
 });
 
 // =======================================================
-// SESSION STORE
+// SESSION CONFIG
 // =======================================================
+
 const pgSession = connectPgSimple(session);
 
 let sessionStore = null;
-let usingPostgresSessions = false;
-
-// =======================================================
-// FALLBACK MEMORY USERS
-// Используется только если PostgreSQL недоступен
-// =======================================================
-const inMemoryUsers = new Map();
 
 // =======================================================
 // DATABASE INITIALIZATION
 // =======================================================
+
 async function initializeDatabase() {
-    try {
-        console.log("🔄 Проверяем PostgreSQL...");
+    console.log("🔄 Проверяем PostgreSQL...");
 
-        await pool.query("SELECT 1");
+    await pool.query("SELECT 1");
 
-        console.log("✅ Подключение к PostgreSQL установлено!");
+    console.log("✅ PostgreSQL подключён");
 
-        // ---------------------------------------------------
-        // USERS
-        // ---------------------------------------------------
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                id VARCHAR(255) PRIMARY KEY,
-                name VARCHAR(255) NOT NULL,
-                avatar VARCHAR(500),
-                balance DECIMAL(10, 2) DEFAULT 0
-            );
-        `);
+    // ===================================================
+    // USERS
+    // ===================================================
 
-        console.log("✅ Таблица users готова");
-
-        // ---------------------------------------------------
-        // SESSION
-        // ---------------------------------------------------
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS "session" (
-                "sid" varchar NOT NULL,
-                "sess" json NOT NULL,
-                "expire" timestamp(6) NOT NULL,
-                CONSTRAINT "session_pkey" PRIMARY KEY ("sid")
-            );
-        `);
-
-        await pool.query(`
-            CREATE INDEX IF NOT EXISTS "IDX_session_expire"
-            ON "session" ("expire");
-        `);
-
-        console.log("✅ Таблица session готова");
-
-        // ---------------------------------------------------
-        // CASES
-        // ---------------------------------------------------
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS cases (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(255) NOT NULL,
-                price DECIMAL(10, 2) NOT NULL,
-                image VARCHAR(500),
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP DEFAULT NOW()
-            );
-        `);
-
-        console.log("✅ Таблица cases готова");
-
-        // ---------------------------------------------------
-        // CASE ITEMS
-        // ---------------------------------------------------
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS case_items (
-                id SERIAL PRIMARY KEY,
-                case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
-                name VARCHAR(255) NOT NULL,
-                image VARCHAR(500),
-                rarity VARCHAR(50) NOT NULL,
-                chance DECIMAL(5, 4) NOT NULL,
-                created_at TIMESTAMP DEFAULT NOW()
-            );
-        `);
-
-        console.log("✅ Таблица case_items готова");
-
-        // ---------------------------------------------------
-        // INVENTORY
-        // ---------------------------------------------------
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS user_inventory (
-                id SERIAL PRIMARY KEY,
-                user_id VARCHAR(255)
-                    REFERENCES users(id)
-                    ON DELETE CASCADE,
-                item_name VARCHAR(255) NOT NULL,
-                item_image VARCHAR(500),
-                rarity VARCHAR(50) NOT NULL,
-                received_at TIMESTAMP DEFAULT NOW()
-            );
-        `);
-
-        console.log("✅ Таблица user_inventory готова");
-
-        // ---------------------------------------------------
-        // CASE HISTORY
-        // ---------------------------------------------------
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS user_cases_history (
-                id SERIAL PRIMARY KEY,
-                user_id VARCHAR(255)
-                    REFERENCES users(id)
-                    ON DELETE CASCADE,
-                case_id INTEGER REFERENCES cases(id),
-                item_id INTEGER REFERENCES case_items(id),
-                opened_at TIMESTAMP DEFAULT NOW()
-            );
-        `);
-
-        console.log("✅ Таблица user_cases_history готова");
-
-        // ---------------------------------------------------
-        // SESSION STORE
-        // ---------------------------------------------------
-        sessionStore = new pgSession({
-            pool: pool,
-            tableName: "session",
-            createTableIfMissing: false,
-        });
-
-        usingPostgresSessions = true;
-
-        console.log("✅ Session Store: PostgreSQL");
-    } catch (error) {
-        console.error(
-            "❌ PostgreSQL недоступен:",
-            error.message
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS users (
+            id VARCHAR(255) PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            avatar VARCHAR(500),
+            balance DECIMAL(10, 2) DEFAULT 0
         );
+    `);
 
-        console.log(
-            "⚠️ Используем встроенный MemoryStore для сессий"
+    console.log("✅ Таблица users готова");
+
+    // ===================================================
+    // SESSION
+    // ===================================================
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS "session" (
+            "sid" varchar NOT NULL,
+            "sess" json NOT NULL,
+            "expire" timestamp(6) NOT NULL,
+            CONSTRAINT "session_pkey" PRIMARY KEY ("sid")
         );
+    `);
 
-        sessionStore = undefined;
-        usingPostgresSessions = false;
-    }
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS "IDX_session_expire"
+        ON "session" ("expire");
+    `);
+
+    console.log("✅ Таблица session готова");
+
+    // ===================================================
+    // CASES
+    // ===================================================
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS cases (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            price DECIMAL(10, 2) NOT NULL,
+            image VARCHAR(500),
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+    `);
+
+    console.log("✅ Таблица cases готова");
+
+    // ===================================================
+    // CASE ITEMS
+    // ===================================================
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS case_items (
+            id SERIAL PRIMARY KEY,
+            case_id INTEGER
+                REFERENCES cases(id)
+                ON DELETE CASCADE,
+            name VARCHAR(255) NOT NULL,
+            image VARCHAR(500),
+            rarity VARCHAR(50) NOT NULL,
+            chance DECIMAL(5, 4) NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+    `);
+
+    console.log("✅ Таблица case_items готова");
+
+    // ===================================================
+    // INVENTORY
+    // ===================================================
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS user_inventory (
+            id SERIAL PRIMARY KEY,
+            user_id VARCHAR(255)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+            item_name VARCHAR(255) NOT NULL,
+            item_image VARCHAR(500),
+            rarity VARCHAR(50) NOT NULL,
+            received_at TIMESTAMP DEFAULT NOW()
+        );
+    `);
+
+    console.log(
+        "✅ Таблица user_inventory готова"
+    );
+
+    // ===================================================
+    // HISTORY
+    // ===================================================
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS user_cases_history (
+            id SERIAL PRIMARY KEY,
+            user_id VARCHAR(255)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+            case_id INTEGER
+                REFERENCES cases(id),
+            item_id INTEGER
+                REFERENCES case_items(id),
+            opened_at TIMESTAMP DEFAULT NOW()
+        );
+    `);
+
+    console.log(
+        "✅ Таблица user_cases_history готова"
+    );
+
+    // ===================================================
+    // SESSION STORE
+    // ===================================================
+
+    sessionStore = new pgSession({
+        pool: pool,
+        tableName: "session",
+        createTableIfMissing: false,
+    });
+
+    console.log(
+        "✅ Session Store подключён: PostgreSQL"
+    );
 }
 
 // =======================================================
 // SESSION
 // =======================================================
+//
 // ВАЖНО:
-// НЕ УСТАНАВЛИВАЕМ connect.sid ВРУЧНУЮ
-// express-session делает это самостоятельно.
+//
+// express-session сам создаёт cookie.
+//
+// НЕ нужно делать:
+// res.cookie("connect.sid", ...)
+//
+// Это было одной из причин проблемы.
 // =======================================================
-app.use(
-    session({
-        store: sessionStore,
 
-        secret: SESSION_SECRET,
+async function setupSession() {
+    await initializeDatabase();
 
-        resave: false,
+    app.use(
+        session({
+            store: sessionStore,
 
-        saveUninitialized: false,
+            secret: SESSION_SECRET,
 
-        rolling: true,
+            resave: false,
 
-        name: "cs2dep.sid",
+            saveUninitialized: false,
 
-        cookie: {
-            httpOnly: true,
+            rolling: true,
 
-            secure: true,
+            name: "cs2dep.sid",
 
-            sameSite: "lax",
+            cookie: {
+                httpOnly: true,
 
-            path: "/",
+                secure: true,
 
-            maxAge: 1000 * 60 * 60 * 24 * 7,
-        },
-    })
-);
+                sameSite: "lax",
 
-// =======================================================
-// SESSION LOGGING
-// =======================================================
-app.use((req, res, next) => {
-    const cookieHeader = req.headers.cookie || "";
+                path: "/",
 
-    const cookieMatch = cookieHeader.match(
-        /cs2dep\.sid=([^;]+)/
-    );
-
-    const rawCookie = cookieMatch
-        ? cookieMatch[1]
-        : null;
-
-    let cookieSessionId = null;
-
-    if (rawCookie) {
-        try {
-            // Express-session cookie имеет формат:
-            // s:SESSION_ID.SIGNATURE
-            const decoded = decodeURIComponent(rawCookie);
-
-            if (decoded.startsWith("s:")) {
-                cookieSessionId =
-                    decoded
-                        .substring(2)
-                        .split(".")[0];
-            }
-        } catch (error) {
-            cookieSessionId = null;
-        }
-    }
-
-    console.log("\n🔍 СЕССИЯ:");
-    console.log(
-        "  Cookie:",
-        rawCookie || "нет"
+                maxAge:
+                    1000 *
+                    60 *
+                    60 *
+                    24 *
+                    7,
+            },
+        })
     );
 
     console.log(
-        "  Cookie Session ID:",
-        cookieSessionId || "не удалось определить"
+        "✅ Express Session подключён"
     );
 
-    console.log(
-        "  Express Session ID:",
-        req.session?.id || "нет"
-    );
+    // ===================================================
+    // SESSION DEBUG
+    // ===================================================
 
-    console.log(
-        "  IDs совпадают:",
-        cookieSessionId &&
-        req.session?.id &&
-        cookieSessionId === req.session.id
-            ? "✅ ДА"
-            : "❌ НЕТ / НОВАЯ СЕССИЯ"
-    );
+    app.use((req, res, next) => {
+        console.log("\n------------------------------");
+        console.log(
+            `📥 ${req.method} ${req.originalUrl}`
+        );
 
-    console.log(
-        "  Store:",
-        req.session?.store ? "✅ есть" : "❌ нет"
-    );
+        console.log(
+            "Cookie:",
+            req.headers.cookie || "нет"
+        );
 
-    console.log(
-        "  Passport:",
-        JSON.stringify(
-            req.session?.passport || "нет"
-        )
-    );
+        console.log(
+            "Session ID:",
+            req.session?.id || "нет"
+        );
 
-    console.log(
-        "  PostgreSQL Sessions:",
-        usingPostgresSessions ? "✅" : "❌ Memory"
-    );
+        console.log(
+            "Passport:",
+            JSON.stringify(
+                req.session?.passport || null
+            )
+        );
 
-    next();
-});
+        console.log(
+            "Authenticated:",
+            req.isAuthenticated?.() || false
+        );
 
-// =======================================================
-// PASSPORT
-// =======================================================
-app.use(passport.initialize());
-app.use(passport.session());
+        console.log("------------------------------");
+
+        next();
+    });
+
+    // ===================================================
+    // PASSPORT
+    // ===================================================
+
+    app.use(passport.initialize());
+    app.use(passport.session());
+
+    console.log("✅ Passport подключён");
+}
 
 // =======================================================
 // STEAM STRATEGY
 // =======================================================
+
 passport.use(
     new SteamStrategy(
         {
@@ -414,26 +405,28 @@ passport.use(
             apiKey: STEAM_API_KEY,
         },
 
-        async function (
+        async (
             identifier,
             profile,
             done
-        ) {
+        ) => {
             try {
-                console.log("✅ Steam вернул профиль!");
+                console.log(
+                    "\n✅ STEAM PROFILE"
+                );
 
                 console.log(
-                    "  ID:",
+                    "Steam ID:",
                     profile.id
                 );
 
                 console.log(
-                    "  Name:",
+                    "Name:",
                     profile.displayName
                 );
 
                 const user = {
-                    id: profile.id,
+                    id: String(profile.id),
 
                     name:
                         profile.displayName ||
@@ -446,65 +439,42 @@ passport.use(
                     balance: 0,
                 };
 
-                // ------------------------------------------------
-                // PostgreSQL
-                // ------------------------------------------------
-                if (usingPostgresSessions) {
-                    await pool.query(
-                        `
-                        INSERT INTO users
-                            (id, name, avatar, balance)
-                        VALUES
-                            ($1, $2, $3, $4)
-                        ON CONFLICT (id)
-                        DO UPDATE SET
-                            name = EXCLUDED.name,
-                            avatar = EXCLUDED.avatar
-                        `,
-                        [
-                            user.id,
-                            user.name,
-                            user.avatar,
-                            user.balance,
-                        ]
-                    );
+                // ==========================================
+                // SAVE USER
+                // ==========================================
 
-                    console.log(
-                        "✅ Пользователь сохранён в PostgreSQL"
-                    );
-                } else {
-                    // ------------------------------------------------
-                    // Memory fallback
-                    // ------------------------------------------------
-                    const existingUser =
-                        inMemoryUsers.get(user.id);
+                await pool.query(
+                    `
+                    INSERT INTO users (
+                        id,
+                        name,
+                        avatar,
+                        balance
+                    )
+                    VALUES ($1, $2, $3, $4)
 
-                    if (existingUser) {
-                        existingUser.name =
-                            user.name;
+                    ON CONFLICT (id)
 
-                        existingUser.avatar =
-                            user.avatar;
+                    DO UPDATE SET
+                        name = EXCLUDED.name,
+                        avatar = EXCLUDED.avatar
+                    `,
+                    [
+                        user.id,
+                        user.name,
+                        user.avatar,
+                        user.balance,
+                    ]
+                );
 
-                        console.log(
-                            "✅ Пользователь обновлён в памяти"
-                        );
-                    } else {
-                        inMemoryUsers.set(
-                            user.id,
-                            user
-                        );
-
-                        console.log(
-                            "✅ Пользователь сохранён в памяти"
-                        );
-                    }
-                }
+                console.log(
+                    "✅ Пользователь сохранён в PostgreSQL"
+                );
 
                 return done(null, user);
             } catch (error) {
                 console.error(
-                    "❌ Ошибка Steam пользователя:",
+                    "❌ Ошибка Steam:",
                     error
                 );
 
@@ -517,10 +487,11 @@ passport.use(
 // =======================================================
 // SERIALIZE USER
 // =======================================================
+
 passport.serializeUser(
     (user, done) => {
         console.log(
-            "🔒 Сериализация:",
+            "🔒 serializeUser:",
             user.id
         );
 
@@ -531,109 +502,97 @@ passport.serializeUser(
 // =======================================================
 // DESERIALIZE USER
 // =======================================================
+
 passport.deserializeUser(
     async (id, done) => {
         try {
             console.log(
-                "🔓 Десериализация:",
+                "🔓 deserializeUser:",
                 id
             );
 
-            // PostgreSQL
-            if (usingPostgresSessions) {
-                const result =
-                    await pool.query(
-                        "SELECT * FROM users WHERE id = $1",
-                        [id]
-                    );
-
-                if (result.rows.length === 0) {
-                    console.log(
-                        "❌ Пользователь не найден"
-                    );
-
-                    return done(null, false);
-                }
-
-                console.log(
-                    "✅ Пользователь найден:",
-                    result.rows[0].name
+            const result =
+                await pool.query(
+                    `
+                    SELECT
+                        id,
+                        name,
+                        avatar,
+                        balance
+                    FROM users
+                    WHERE id = $1
+                    `,
+                    [id]
                 );
 
-                return done(
-                    null,
-                    result.rows[0]
-                );
-            }
-
-            // Memory
-            const user =
-                inMemoryUsers.get(id);
-
-            if (!user) {
+            if (
+                result.rows.length === 0
+            ) {
                 console.log(
-                    "❌ Пользователь не найден в памяти"
+                    "❌ Пользователь не найден"
                 );
 
                 return done(null, false);
             }
 
+            const user =
+                result.rows[0];
+
             console.log(
-                "✅ Пользователь найден в памяти:",
+                "✅ Пользователь найден:",
                 user.name
             );
 
-            return done(null, user);
+            done(null, user);
         } catch (error) {
             console.error(
-                "❌ Ошибка десериализации:",
+                "❌ Ошибка deserializeUser:",
                 error
             );
 
-            return done(error);
+            done(error);
         }
     }
 );
 
 // =======================================================
-// AUTH — STEAM
+// AUTH — START STEAM LOGIN
 // =======================================================
+
 app.get(
     "/api/auth/steam",
+
     (req, res, next) => {
         console.log(
-            "\n🔄 Начало авторизации Steam"
+            "\n🔄 НАЧАЛО STEAM АВТОРИЗАЦИИ"
         );
 
         console.log(
-            "  Session ID:",
+            "Session ID:",
             req.session.id
         );
 
         next();
     },
+
     passport.authenticate("steam")
 );
 
 // =======================================================
-// AUTH — STEAM RETURN
+// AUTH — STEAM CALLBACK
 // =======================================================
+
 app.get(
     "/api/auth/steam/return",
 
     (req, res, next) => {
         console.log(
-            "\n🔄 Возврат от Steam"
+            "\n🔄 STEAM CALLBACK"
         );
 
         console.log(
-            "  Query:",
-            req.query
-        );
-
-        console.log(
-            "  Session ID до Passport:",
-            req.session?.id
+            "Session BEFORE passport:",
+            req.session.id
         );
 
         next();
@@ -647,98 +606,118 @@ app.get(
 
     (req, res) => {
         console.log(
-            "\n🎉 АУТЕНТИФИКАЦИЯ УСПЕШНА!"
+            "\n🎉 STEAM АВТОРИЗАЦИЯ УСПЕШНА"
         );
 
         console.log(
-            "  User ID:",
-            req.user?.id
+            "User:",
+            req.user
         );
 
         console.log(
-            "  User Name:",
-            req.user?.name
-        );
-
-        console.log(
-            "  Session ID:",
+            "Session ID:",
             req.session.id
         );
 
         console.log(
-            "  Passport:",
+            "Passport session:",
             JSON.stringify(
                 req.session.passport
             )
         );
 
-        // ---------------------------------------------------
-        // КРИТИЧЕСКИ ВАЖНО:
-        // СОХРАНЯЕМ СЕССИЮ.
-        // COOKIE ВРУЧНУЮ НЕ СОЗДАЁМ.
-        // ---------------------------------------------------
-        req.session.save((err) => {
-            if (err) {
-                console.error(
-                    "❌ Ошибка сохранения сессии:",
-                    err
+        // =================================================
+        // SAVE SESSION
+        // =================================================
+
+        req.session.save(
+            async (error) => {
+                if (error) {
+                    console.error(
+                        "❌ Ошибка сохранения session:",
+                        error
+                    );
+
+                    return res.redirect(
+                        `${FRONTEND_URL}/?error=session`
+                    );
+                }
+
+                console.log(
+                    "✅ SESSION СОХРАНЕНА"
+                );
+
+                console.log(
+                    "Session ID:",
+                    req.session.id
+                );
+
+                // =========================================
+                // VERIFY SESSION IN POSTGRES
+                // =========================================
+
+                try {
+                    const result =
+                        await pool.query(
+                            `
+                            SELECT
+                                sid,
+                                sess,
+                                expire
+                            FROM "session"
+                            WHERE sid = $1
+                            `,
+                            [req.session.id]
+                        );
+
+                    if (
+                        result.rows.length > 0
+                    ) {
+                        console.log(
+                            "✅ SESSION НАЙДЕНА В POSTGRESQL"
+                        );
+
+                        console.log(
+                            "Session DB ID:",
+                            result.rows[0].sid
+                        );
+                    } else {
+                        console.error(
+                            "❌ SESSION НЕ НАЙДЕНА В POSTGRESQL"
+                        );
+                    }
+                } catch (dbError) {
+                    console.error(
+                        "❌ Ошибка проверки session:",
+                        dbError
+                    );
+                }
+
+                // =========================================
+                // НЕ СОЗДАЁМ COOKIE ВРУЧНУЮ
+                // =========================================
+
+                console.log(
+                    "🍪 Cookie установит express-session"
+                );
+
+                console.log(
+                    "🔗 Redirect:",
+                    FRONTEND_URL
                 );
 
                 return res.redirect(
-                    `${FRONTEND_URL}/?error=session`
+                    FRONTEND_URL
                 );
             }
-
-            console.log(
-                "✅ Сессия сохранена"
-            );
-
-            console.log(
-                "  Session ID:",
-                req.session.id
-            );
-
-            console.log(
-                "🍪 Cookie устанавливается express-session автоматически"
-            );
-
-            // ------------------------------------------------
-            // Проверка сессии в PostgreSQL
-            // ------------------------------------------------
-            if (usingPostgresSessions) {
-                pool.query(
-                    'SELECT sid FROM "session" WHERE sid = $1',
-                    [req.session.id]
-                )
-                    .then((result) => {
-                        console.log(
-                            "  Сессия в PostgreSQL:",
-                            result.rows.length > 0
-                                ? "✅ ЕСТЬ"
-                                : "❌ НЕТ"
-                        );
-                    })
-                    .catch((error) => {
-                        console.error(
-                            "  ❌ Ошибка проверки session:",
-                            error.message
-                        );
-                    });
-            }
-
-            console.log(
-                "🔗 Редирект:",
-                FRONTEND_URL
-            );
-
-            res.redirect(FRONTEND_URL);
-        });
+        );
     }
 );
 
 // =======================================================
-// AUTH ME
+// CURRENT USER
 // =======================================================
+
 app.get(
     "/api/auth/me",
     (req, res) => {
@@ -747,25 +726,24 @@ app.get(
         );
 
         console.log(
-            "  Session ID:",
+            "Session ID:",
             req.session?.id
         );
 
         console.log(
-            "  Passport:",
+            "Passport:",
             JSON.stringify(
-                req.session?.passport ||
-                "нет"
+                req.session?.passport || null
             )
         );
 
         console.log(
-            "  isAuthenticated:",
+            "Authenticated:",
             req.isAuthenticated?.()
         );
 
         console.log(
-            "  req.user:",
+            "User:",
             req.user?.id || "нет"
         );
 
@@ -777,11 +755,9 @@ app.get(
                 "❌ НЕ АВТОРИЗОВАН"
             );
 
-            return res
-                .status(401)
-                .json({
-                    error: "Unauthorized",
-                });
+            return res.status(401).json({
+                error: "Unauthorized",
+            });
         }
 
         console.log(
@@ -789,13 +765,22 @@ app.get(
             req.user.name
         );
 
-        res.json(req.user);
+        res.json({
+            id: req.user.id,
+
+            name: req.user.name,
+
+            avatar: req.user.avatar,
+
+            balance: req.user.balance,
+        });
     }
 );
 
 // =======================================================
 // CHECK SESSION
 // =======================================================
+
 app.get(
     "/api/auth/check-session",
     (req, res) => {
@@ -809,19 +794,15 @@ app.get(
 
             user: req.user
                 ? {
-                    id: req.user.id,
-                    name: req.user.name,
-                }
+                      id: req.user.id,
+                      name: req.user.name,
+                      avatar: req.user.avatar,
+                  }
                 : null,
 
             passportUser:
                 req.session?.passport?.user ||
                 null,
-
-            sessionStore:
-                usingPostgresSessions
-                    ? "postgres"
-                    : "memory",
 
             cookie:
                 req.headers.cookie || null,
@@ -832,56 +813,60 @@ app.get(
 // =======================================================
 // LOGOUT
 // =======================================================
+
 app.post(
     "/api/auth/logout",
     (req, res) => {
         console.log(
-            "\n🚪 Выход пользователя"
+            "\n🚪 LOGOUT"
         );
 
         req.logout((logoutError) => {
             if (logoutError) {
                 console.error(
-                    "❌ Logout error:",
+                    "❌ logout:",
                     logoutError
                 );
 
-                return res
-                    .status(500)
-                    .json({
-                        error:
-                            logoutError.message,
-                    });
+                return res.status(500).json({
+                    error:
+                        logoutError.message,
+                });
             }
 
             req.session.destroy(
-                (destroyError) => {
-                    if (destroyError) {
+                (sessionError) => {
+                    if (sessionError) {
                         console.error(
-                            "❌ Session destroy error:",
-                            destroyError
+                            "❌ destroy session:",
+                            sessionError
                         );
 
                         return res
                             .status(500)
                             .json({
                                 error:
-                                    destroyError.message,
+                                    sessionError.message,
                             });
                     }
 
+                    // ВАЖНО:
+                    // используется новое имя cookie
                     res.clearCookie(
                         "cs2dep.sid",
                         {
-                            httpOnly: true,
-                            secure: true,
-                            sameSite: "lax",
+                            httpOnly:
+                                true,
+                            secure:
+                                true,
+                            sameSite:
+                                "lax",
                             path: "/",
                         }
                     );
 
                     console.log(
-                        "✅ Пользователь вышел"
+                        "✅ LOGOUT УСПЕШЕН"
                     );
 
                     res.json({
@@ -896,6 +881,7 @@ app.post(
 // =======================================================
 // CASES
 // =======================================================
+
 app.get(
     "/api/cases",
     async (req, res) => {
@@ -916,7 +902,7 @@ app.get(
             res.json(result.rows);
         } catch (error) {
             console.error(
-                "❌ Ошибка получения кейсов:",
+                "❌ Ошибка cases:",
                 error
             );
 
@@ -931,6 +917,7 @@ app.get(
 // =======================================================
 // CASE ITEMS
 // =======================================================
+
 app.get(
     "/api/cases/:id/items",
     async (req, res) => {
@@ -957,7 +944,7 @@ app.get(
             res.json(result.rows);
         } catch (error) {
             console.error(
-                "❌ Ошибка получения предметов:",
+                "❌ Ошибка case items:",
                 error
             );
 
@@ -972,10 +959,15 @@ app.get(
 // =======================================================
 // OPEN CASE
 // =======================================================
+
 app.post(
     "/api/cases/:id/open",
     async (req, res) => {
         try {
+            // ----------------------------------------------
+            // AUTH
+            // ----------------------------------------------
+
             if (
                 !req.isAuthenticated ||
                 !req.isAuthenticated()
@@ -990,7 +982,20 @@ app.post(
                 req.user.id;
 
             const caseId =
-                parseInt(req.params.id);
+                Number(req.params.id);
+
+            if (
+                !Number.isInteger(caseId)
+            ) {
+                return res.status(400).json({
+                    error:
+                        "Invalid case ID",
+                });
+            }
+
+            // ----------------------------------------------
+            // CASE
+            // ----------------------------------------------
 
             const caseResult =
                 await pool.query(
@@ -1019,12 +1024,17 @@ app.post(
                 caseResult.rows[0];
 
             const price =
-                parseFloat(caseData.price);
+                Number(caseData.price);
+
+            // ----------------------------------------------
+            // USER BALANCE
+            // ----------------------------------------------
 
             const userResult =
                 await pool.query(
                     `
-                    SELECT balance
+                    SELECT
+                        balance
                     FROM users
                     WHERE id = $1
                     `,
@@ -1041,8 +1051,9 @@ app.post(
             }
 
             const currentBalance =
-                parseFloat(
-                    userResult.rows[0]
+                Number(
+                    userResult
+                        .rows[0]
                         .balance
                 );
 
@@ -1052,12 +1063,18 @@ app.post(
                 return res.status(400).json({
                     error:
                         "Insufficient balance",
+
                     balance:
                         currentBalance,
+
                     required:
                         price,
                 });
             }
+
+            // ----------------------------------------------
+            // ITEMS
+            // ----------------------------------------------
 
             const itemsResult =
                 await pool.query(
@@ -1086,17 +1103,23 @@ app.post(
             const items =
                 itemsResult.rows;
 
+            // ----------------------------------------------
+            // RANDOM ITEM
+            // ----------------------------------------------
+
             const random =
                 Math.random();
 
             let cumulative = 0;
+
             let selectedItem = null;
 
-            for (const item of items) {
-                cumulative +=
-                    parseFloat(
-                        item.chance
-                    );
+            for (
+                const item of items
+            ) {
+                cumulative += Number(
+                    item.chance
+                );
 
                 if (
                     random <= cumulative
@@ -1115,9 +1138,17 @@ app.post(
                     ];
             }
 
+            // ----------------------------------------------
+            // NEW BALANCE
+            // ----------------------------------------------
+
             const newBalance =
                 currentBalance -
                 price;
+
+            // ----------------------------------------------
+            // UPDATE BALANCE
+            // ----------------------------------------------
 
             await pool.query(
                 `
@@ -1131,43 +1162,56 @@ app.post(
                 ]
             );
 
+            // ----------------------------------------------
+            // INVENTORY
+            // ----------------------------------------------
+
             await pool.query(
                 `
-                INSERT INTO user_inventory
-                    (
-                        user_id,
-                        item_name,
-                        item_image,
-                        rarity
-                    )
-                VALUES
-                    ($1, $2, $3, $4)
+                INSERT INTO user_inventory (
+                    user_id,
+                    item_name,
+                    item_image,
+                    rarity
+                )
+                VALUES ($1, $2, $3, $4)
                 `,
                 [
                     userId,
+
                     selectedItem.name,
+
                     selectedItem.image,
+
                     selectedItem.rarity,
                 ]
             );
 
+            // ----------------------------------------------
+            // HISTORY
+            // ----------------------------------------------
+
             await pool.query(
                 `
-                INSERT INTO user_cases_history
-                    (
-                        user_id,
-                        case_id,
-                        item_id
-                    )
-                VALUES
-                    ($1, $2, $3)
+                INSERT INTO user_cases_history (
+                    user_id,
+                    case_id,
+                    item_id
+                )
+                VALUES ($1, $2, $3)
                 `,
                 [
                     userId,
+
                     caseId,
+
                     selectedItem.id,
                 ]
             );
+
+            // ----------------------------------------------
+            // RESPONSE
+            // ----------------------------------------------
 
             res.json({
                 success: true,
@@ -1212,6 +1256,7 @@ app.post(
 // =======================================================
 // INVENTORY
 // =======================================================
+
 app.get(
     "/api/user/inventory",
     async (req, res) => {
@@ -1248,7 +1293,7 @@ app.get(
             res.json(result.rows);
         } catch (error) {
             console.error(
-                "❌ Ошибка получения инвентаря:",
+                "❌ Ошибка inventory:",
                 error
             );
 
@@ -1263,6 +1308,7 @@ app.get(
 // =======================================================
 // BALANCE
 // =======================================================
+
 app.get(
     "/api/user/balance",
     async (req, res) => {
@@ -1283,7 +1329,8 @@ app.get(
             const result =
                 await pool.query(
                     `
-                    SELECT balance
+                    SELECT
+                        balance
                     FROM users
                     WHERE id = $1
                     `,
@@ -1301,13 +1348,15 @@ app.get(
 
             res.json({
                 balance:
-                    parseFloat(
-                        result.rows[0].balance
+                    Number(
+                        result
+                            .rows[0]
+                            .balance
                     ),
             });
         } catch (error) {
             console.error(
-                "❌ Ошибка получения баланса:",
+                "❌ Ошибка balance:",
                 error
             );
 
@@ -1320,35 +1369,46 @@ app.get(
 );
 
 // =======================================================
-// HEALTH
+// HEALTH CHECK
 // =======================================================
+
 app.get(
     "/api/health",
-    (req, res) => {
-        res.json({
-            status: "ok",
-            timestamp:
-                new Date().toISOString(),
-            sessionStore:
-                usingPostgresSessions
-                    ? "postgres"
-                    : "memory",
-        });
+    async (req, res) => {
+        try {
+            await pool.query("SELECT 1");
+
+            res.json({
+                status: "ok",
+
+                database: "connected",
+
+                timestamp:
+                    new Date().toISOString(),
+            });
+        } catch (error) {
+            res.status(500).json({
+                status: "error",
+
+                database:
+                    "disconnected",
+            });
+        }
     }
 );
 
 // =======================================================
 // 404
 // =======================================================
+
 app.use(
     (req, res) => {
         console.log(
-            `❌ 404: ${req.method} ${req.path}`
+            `❌ 404: ${req.method} ${req.originalUrl}`
         );
 
         res.status(404).json({
-            error:
-                "Not found",
+            error: "Not found",
         });
     }
 );
@@ -1356,10 +1416,16 @@ app.use(
 // =======================================================
 // ERROR HANDLER
 // =======================================================
+
 app.use(
-    (err, req, res, next) => {
+    (
+        err,
+        req,
+        res,
+        next
+    ) => {
         console.error(
-            "❌ Server error:",
+            "❌ SERVER ERROR:",
             err
         );
 
@@ -1369,17 +1435,19 @@ app.use(
 
         res.status(500).json({
             error:
-                err.message,
+                err.message ||
+                "Internal server error",
         });
     }
 );
 
 // =======================================================
-// START SERVER
+// START
 // =======================================================
+
 async function startServer() {
     try {
-        await initializeDatabase();
+        await setupSession();
 
         app.listen(
             PORT,
@@ -1389,7 +1457,7 @@ async function startServer() {
                 );
 
                 console.log(
-                    "✅ SERVER ЗАПУЩЕН"
+                    "✅ SERVER УСПЕШНО ЗАПУЩЕН"
                 );
 
                 console.log(
@@ -1397,29 +1465,17 @@ async function startServer() {
                 );
 
                 console.log(
-                    "PORT:",
-                    PORT
-                );
-
-                console.log(
-                    "BASE_URL:",
+                    "API:",
                     BASE_URL
                 );
 
                 console.log(
-                    "FRONTEND_URL:",
+                    "Frontend:",
                     FRONTEND_URL
                 );
 
                 console.log(
-                    "SESSION STORE:",
-                    usingPostgresSessions
-                        ? "PostgreSQL"
-                        : "MemoryStore"
-                );
-
-                console.log(
-                    "Steam:",
+                    "Steam Login:",
                     `${BASE_URL}/api/auth/steam`
                 );
 
@@ -1434,14 +1490,28 @@ async function startServer() {
                 );
 
                 console.log(
+                    "Health:",
+                    `${BASE_URL}/api/health`
+                );
+
+                console.log(
+                    "Session Store: PostgreSQL"
+                );
+
+                console.log(
                     "========================================\n"
                 );
             }
         );
     } catch (error) {
         console.error(
-            "❌ Критическая ошибка запуска:",
-            error
+            "\n❌ КРИТИЧЕСКАЯ ОШИБКА ЗАПУСКА"
+        );
+
+        console.error(error);
+
+        console.error(
+            "\nСервер остановлен."
         );
 
         process.exit(1);
