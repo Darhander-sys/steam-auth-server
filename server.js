@@ -51,7 +51,6 @@ app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
         
-        // Список разрешённых доменов
         const allowed = [
             'https://cs2dep.online',
             'https://www.cs2dep.online',
@@ -60,7 +59,6 @@ app.use(cors({
             'http://localhost:3000',
         ];
         
-        // Разрешаем ВСЕ поддомены Framer
         if (origin.includes('framer.app') || 
             origin.includes('framercanvas.com') || 
             origin.includes('framer.work') ||
@@ -92,7 +90,7 @@ const pool = new Pool({
 
 const pgSession = connectPgSimple(session);
 
-// ===== СЕССИИ =====
+// ===== СЕССИИ (ИЗМЕНЕНО) =====
 app.use(session({
     store: new pgSession({
         pool: pool,
@@ -101,7 +99,7 @@ app.use(session({
     }),
     secret: SESSION_SECRET,
     resave: false,
-    saveUninitialized: true,  // ← ИЗМЕНЕНО
+    saveUninitialized: true,  // ← ИЗМЕНЕНО С false НА true
     cookie: {
         httpOnly: true,
         sameSite: "lax",       // ← ИЗМЕНЕНО С "none" НА "lax"
@@ -185,6 +183,7 @@ app.get("/api/auth/steam",
     passport.authenticate("steam")
 );
 
+// ===== ЭТОТ БЛОК ИЗМЕНЁН (ДОБАВЛЕНА ПРИНУДИТЕЛЬНАЯ УСТАНОВКА КУКИ) =====
 app.get("/api/auth/steam/return",
     (req, res, next) => {
         console.log('🔄 Возврат от Steam');
@@ -202,6 +201,18 @@ app.get("/api/auth/steam/return",
         console.log('  User Name:', req.user?.name);
         console.log('  Session ID:', req.session.id);
         console.log('  Session Passport:', JSON.stringify(req.session.passport));
+        
+        // ⭐⭐⭐ ПРИНУДИТЕЛЬНАЯ УСТАНОВКА КУКИ ⭐⭐⭐
+        res.cookie('connect.sid', req.session.id, {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'lax',
+            domain: '.cs2dep.online',
+            maxAge: 1000 * 60 * 60 * 24 * 7,
+            path: '/'
+        });
+        console.log('🍪 Кука ПРИНУДИТЕЛЬНО установлена:', req.session.id);
+        // ⭐⭐⭐ КОНЕЦ БЛОКА ⭐⭐⭐
         
         req.session.save((err) => {
             if (err) {
@@ -223,6 +234,7 @@ app.get("/api/auth/steam/return",
     }
 );
 
+// ===== ВСЁ ОСТАЛЬНОЕ БЕЗ ИЗМЕНЕНИЙ =====
 app.get("/api/auth/me", (req, res) => {
     console.log('🔍 /api/auth/me');
     console.log('  isAuthenticated:', req.isAuthenticated?.());
@@ -262,7 +274,7 @@ app.post("/api/auth/logout", (req, res) => {
             if (err) return res.status(500).json({ error: err.message });
             res.clearCookie('connect.sid', {
                 httpOnly: true,
-                sameSite: "none",
+                sameSite: "lax",
                 secure: true,
                 domain: ".cs2dep.online",
             });
@@ -272,7 +284,7 @@ app.post("/api/auth/logout", (req, res) => {
 });
 
 // =======================================================
-//  API ДЛЯ РАБОТЫ С КЕЙСАМИ
+//  API ДЛЯ РАБОТЫ С КЕЙСАМИ (БЕЗ ИЗМЕНЕНИЙ)
 // =======================================================
 
 app.get("/api/cases", async (req, res) => {
