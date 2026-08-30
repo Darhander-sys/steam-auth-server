@@ -88,14 +88,26 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false },
 });
 
+// Проверка подключения к БД
+pool.connect((err, client, release) => {
+    if (err) {
+        console.error('❌ Ошибка подключения к БД:', err.message);
+    } else {
+        console.log('✅ Подключение к PostgreSQL установлено!');
+        release();
+    }
+});
+
 // ===== СЕССИИ =====
-const pgSession = require('connect-pg-simple')(session);
+const pgSession = connectPgSimple(session);
 
 const sessionStore = new pgSession({
     pool: pool,
     tableName: "session",
     createTableIfMissing: true,
 });
+
+console.log('✅ sessionStore создан');
 
 app.use(session({
     store: sessionStore,
@@ -113,13 +125,27 @@ app.use(session({
     rolling: true,
 }));
 
-// ===== MIDDLEWARE ДЛЯ ЛОГИРОВАНИЯ =====
+// ===== MIDDLEWARE ДЛЯ ЛОГИРОВАНИЯ СЕССИИ =====
 app.use((req, res, next) => {
     console.log('🔍 СЕССИЯ:');
     console.log('  Cookie ID:', req.headers.cookie?.match(/connect\.sid=([^;]+)/)?.[1] || 'нет');
     console.log('  Session ID:', req.session?.id || 'нет');
-    console.log('  Session Store:', req.session?.store ? 'есть' : 'нет');
+    console.log('  Session Store:', req.session?.store ? '✅ есть' : '❌ нет');
     console.log('  Session Passport:', JSON.stringify(req.session?.passport || 'нет'));
+    
+    // Проверяем, что сессия сохраняется в БД
+    if (req.session?.id) {
+        pool.query('SELECT * FROM "session" WHERE sid = $1', [req.session.id])
+            .then(result => {
+                if (result.rows.length > 0) {
+                    console.log('  Сессия в БД: ✅ есть');
+                } else {
+                    console.log('  Сессия в БД: ❌ нет (будет создана при сохранении)');
+                }
+            })
+            .catch(err => console.error('  Ошибка проверки БД:', err.message));
+    }
+    
     next();
 });
 
@@ -196,9 +222,6 @@ app.get("/api/auth/steam",
     passport.authenticate("steam")
 );
 
-// ============================================================
-//  ⬇️⬇️⬇️ МАРШРУТ /api/auth/steam/return (НОВЫЙ) ⬇️⬇️⬇️
-// ============================================================
 app.get("/api/auth/steam/return",
     (req, res, next) => {
         console.log('🔄 Возврат от Steam');
@@ -217,7 +240,6 @@ app.get("/api/auth/steam/return",
         console.log('  Session ID:', req.session.id);
         console.log('  Session Passport:', JSON.stringify(req.session.passport));
         
-        // Сохраняем сессию ПЕРЕД установкой куки
         req.session.save((err) => {
             if (err) {
                 console.error('❌ Ошибка сохранения сессии:', err);
@@ -226,7 +248,6 @@ app.get("/api/auth/steam/return",
             
             console.log('✅ Сессия сохранена с ID:', req.session.id);
             
-            // Теперь устанавливаем куку ПОСЛЕ сохранения
             res.cookie('connect.sid', req.session.id, {
                 httpOnly: true,
                 secure: true,
@@ -237,7 +258,6 @@ app.get("/api/auth/steam/return",
             });
             console.log('🍪 Кука установлена с ID:', req.session.id);
             
-            // Проверяем в БД
             pool.query('SELECT * FROM "session" WHERE sid = $1', [req.session.id])
                 .then(result => {
                     console.log('  Сессия в БД:', result.rows.length > 0 ? '✅ есть' : '❌ нет');
@@ -249,7 +269,6 @@ app.get("/api/auth/steam/return",
         });
     }
 );
-// ============================================================
 
 app.get("/api/auth/me", (req, res) => {
     console.log('🔍 /api/auth/me');
@@ -508,6 +527,15 @@ app.use((err, req, res, next) => {
 
 async function startServer() {
     try {
+        // Проверяем, существует ли таблица session
+        const tableCheck = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'session'
+            );
+        `);
+        console.log('  Таблица session существует:', tableCheck.rows[0].exists);
+
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id VARCHAR(255) PRIMARY KEY,
