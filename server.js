@@ -88,11 +88,9 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false },
 });
 
-const pgSession = connectPgSimple(session);
+// ===== СЕССИИ =====
+const pgSession = require('connect-pg-simple')(session);
 
-// ============================================================
-//  ⬇️⬇️⬇️ СЕССИИ (НОВЫЙ БЛОК) ⬇️⬇️⬇️
-// ============================================================
 const sessionStore = new pgSession({
     pool: pool,
     tableName: "session",
@@ -114,20 +112,16 @@ app.use(session({
     name: 'connect.sid',
     rolling: true,
 }));
-// ============================================================
 
-// ============================================================
-//  ⬇️⬇️⬇️ MIDDLEWARE ДЛЯ ЛОГИРОВАНИЯ СЕССИИ ⬇️⬇️⬇️
-// ============================================================
+// ===== MIDDLEWARE ДЛЯ ЛОГИРОВАНИЯ =====
 app.use((req, res, next) => {
     console.log('🔍 СЕССИЯ:');
     console.log('  Cookie ID:', req.headers.cookie?.match(/connect\.sid=([^;]+)/)?.[1] || 'нет');
     console.log('  Session ID:', req.session?.id || 'нет');
-    console.log('  Session Passport:', JSON.stringify(req.session?.passport || 'нет'));
     console.log('  Session Store:', req.session?.store ? 'есть' : 'нет');
+    console.log('  Session Passport:', JSON.stringify(req.session?.passport || 'нет'));
     next();
 });
-// ============================================================
 
 app.use(passport.initialize());
 app.use(passport.session());
