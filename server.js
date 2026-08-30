@@ -51,18 +51,17 @@ app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
         
-        // Разрешаем все поддомены framer.app, framercanvas.com, railway.app и localhost
-        if (origin.includes('framer.app') || 
-            origin.includes('framercanvas.com') || 
-            origin.includes('localhost') ||
-            origin.includes('railway.app')) {
-            console.log('✅ CORS разрешён для:', origin);
-            return callback(null, true);
-        }
+        const allowed = [
+            'https://cs2dep.online',
+            'https://www.cs2dep.online',
+            'https://api.cs2dep.online',
+            'http://localhost:5173',
+            'http://localhost:3000',
+        ];
         
-        // ===== ДОБАВЛЯЕМ ВАШ ДОМЕН =====
-        if (origin === 'https://cs2dep.online' || 
-            origin === 'https://www.cs2dep.online') {
+        if (allowed.includes(origin) || 
+            origin.includes('framer.app') || 
+            origin.includes('railway.app')) {
             console.log('✅ CORS разрешён для:', origin);
             return callback(null, true);
         }
@@ -99,7 +98,7 @@ app.use(session({
         httpOnly: true,
         sameSite: "none",
         secure: true,
-	domain: ".cs2dep.online",
+        domain: ".cs2dep.online",  // ← КЛЮЧЕВОЙ ПАРАМЕТР
         maxAge: 1000 * 60 * 60 * 24 * 7,
     },
 }));
@@ -256,6 +255,7 @@ app.post("/api/auth/logout", (req, res) => {
                 httpOnly: true,
                 sameSite: "none",
                 secure: true,
+                domain: ".cs2dep.online",
             });
             res.json({ success: true });
         });
@@ -266,7 +266,6 @@ app.post("/api/auth/logout", (req, res) => {
 //  API ДЛЯ РАБОТЫ С КЕЙСАМИ
 // =======================================================
 
-// === Получить список всех активных кейсов ===
 app.get("/api/cases", async (req, res) => {
     try {
         const result = await pool.query(
@@ -282,7 +281,6 @@ app.get("/api/cases", async (req, res) => {
     }
 });
 
-// === Получить предметы из кейса ===
 app.get("/api/cases/:id/items", async (req, res) => {
     try {
         const caseId = req.params.id;
@@ -300,10 +298,8 @@ app.get("/api/cases/:id/items", async (req, res) => {
     }
 });
 
-// === Открыть кейс ===
 app.post("/api/cases/:id/open", async (req, res) => {
     try {
-        // Проверяем, авторизован ли пользователь
         if (!req.isAuthenticated || !req.isAuthenticated()) {
             return res.status(401).json({ error: "Unauthorized" });
         }
@@ -311,7 +307,6 @@ app.post("/api/cases/:id/open", async (req, res) => {
         const userId = req.user.id;
         const caseId = parseInt(req.params.id);
 
-        // 1. Получаем информацию о кейсе
         const caseResult = await pool.query(
             `SELECT id, name, price FROM cases WHERE id = $1 AND is_active = true`,
             [caseId]
@@ -324,7 +319,6 @@ app.post("/api/cases/:id/open", async (req, res) => {
         const caseData = caseResult.rows[0];
         const price = parseFloat(caseData.price);
 
-        // 2. Проверяем баланс пользователя
         const userResult = await pool.query(
             `SELECT balance FROM users WHERE id = $1`,
             [userId]
@@ -344,7 +338,6 @@ app.post("/api/cases/:id/open", async (req, res) => {
             });
         }
 
-        // 3. Получаем все предметы из кейса с шансами
         const itemsResult = await pool.query(
             `SELECT id, name, image, rarity, chance 
              FROM case_items 
@@ -356,7 +349,6 @@ app.post("/api/cases/:id/open", async (req, res) => {
             return res.status(404).json({ error: "No items in this case" });
         }
 
-        // 4. Выбираем предмет по шансам
         const items = itemsResult.rows;
         const random = Math.random();
         let cumulative = 0;
@@ -370,33 +362,28 @@ app.post("/api/cases/:id/open", async (req, res) => {
             }
         }
 
-        // На случай, если ничего не выбралось (баг)
         if (!selectedItem) {
             selectedItem = items[items.length - 1];
         }
 
-        // 5. Списываем деньги с баланса
         const newBalance = currentBalance - price;
         await pool.query(
             `UPDATE users SET balance = $1 WHERE id = $2`,
             [newBalance, userId]
         );
 
-        // 6. Добавляем предмет в инвентарь пользователя
         await pool.query(
             `INSERT INTO user_inventory (user_id, item_name, item_image, rarity) 
              VALUES ($1, $2, $3, $4)`,
             [userId, selectedItem.name, selectedItem.image, selectedItem.rarity]
         );
 
-        // 7. Сохраняем историю открытия
         await pool.query(
             `INSERT INTO user_cases_history (user_id, case_id, item_id) 
              VALUES ($1, $2, $3)`,
             [userId, caseId, selectedItem.id]
         );
 
-        // 8. Возвращаем результат
         res.json({
             success: true,
             case: caseData.name,
@@ -416,7 +403,6 @@ app.post("/api/cases/:id/open", async (req, res) => {
     }
 });
 
-// === Получить инвентарь пользователя ===
 app.get("/api/user/inventory", async (req, res) => {
     try {
         if (!req.isAuthenticated || !req.isAuthenticated()) {
@@ -438,7 +424,6 @@ app.get("/api/user/inventory", async (req, res) => {
     }
 });
 
-// === Получить баланс пользователя ===
 app.get("/api/user/balance", async (req, res) => {
     try {
         if (!req.isAuthenticated || !req.isAuthenticated()) {
@@ -486,7 +471,6 @@ app.use((err, req, res, next) => {
 
 async function startServer() {
     try {
-        // Создаём таблицу users
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id VARCHAR(255) PRIMARY KEY,
@@ -497,7 +481,6 @@ async function startServer() {
         `);
         console.log('✅ Таблица users готова');
         
-        // Создаём таблицу session
         await pool.query(`
             CREATE TABLE IF NOT EXISTS "session" (
                 "sid" varchar NOT NULL,
@@ -511,7 +494,6 @@ async function startServer() {
         `);
         console.log('✅ Таблица session готова');
         
-        // Создаём таблицы для кейсов
         await pool.query(`
             CREATE TABLE IF NOT EXISTS cases (
                 id SERIAL PRIMARY KEY,
