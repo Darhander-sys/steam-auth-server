@@ -35,6 +35,8 @@ if (!DATABASE_URL) {
 
 const app = express();
 
+app.set('trust proxy', 1);
+
 // ===== ЛОГИРОВАНИЕ =====
 app.use((req, res, next) => {
     console.log(`\n📥 ${req.method} ${req.path}`);
@@ -112,16 +114,21 @@ console.log('✅ sessionStore создан');
 app.use(session({
     store: sessionStore,
     secret: SESSION_SECRET,
-    resave: true,
+
+    resave: false,
     saveUninitialized: false,
+
+    name: "connect.sid",
+
     cookie: {
         httpOnly: true,
-        sameSite: "lax",
         secure: true,
+        sameSite: "lax",
         domain: ".cs2dep.online",
+        path: "/",
         maxAge: 1000 * 60 * 60 * 24 * 7,
     },
-    name: 'connect.sid',
+
     rolling: true,
 }));
 
@@ -240,33 +247,29 @@ app.get("/api/auth/steam/return",
         console.log('  Session ID:', req.session.id);
         console.log('  Session Passport:', JSON.stringify(req.session.passport));
         
-        req.session.save((err) => {
-            if (err) {
-                console.error('❌ Ошибка сохранения сессии:', err);
-                return res.redirect(FRONTEND_URL + '?error=session');
-            }
-            
-            console.log('✅ Сессия сохранена с ID:', req.session.id);
-            
-            res.cookie('connect.sid', req.session.id, {
-                httpOnly: true,
-                secure: true,
-                sameSite: 'lax',
-                domain: '.cs2dep.online',
-                maxAge: 1000 * 60 * 60 * 24 * 7,
-                path: '/'
-            });
-            console.log('🍪 Кука установлена с ID:', req.session.id);
-            
-            pool.query('SELECT * FROM "session" WHERE sid = $1', [req.session.id])
-                .then(result => {
-                    console.log('  Сессия в БД:', result.rows.length > 0 ? '✅ есть' : '❌ нет');
-                })
-                .catch(err => console.error('  Ошибка проверки БД:', err));
-            
-            console.log('🔗 Редирект на:', FRONTEND_URL);
-            res.redirect(FRONTEND_URL);
-        });
+	req.session.save((err) => {
+	    if (err) {
+ 	       console.error('❌ Ошибка сохранения сессии:', err);
+ 	       return res.redirect(FRONTEND_URL + '?error=session');
+ 	   }
+	
+ 	   console.log('✅ Сессия сохранена с ID:', req.session.id);
+	
+	    pool.query('SELECT * FROM "session" WHERE sid = $1', [req.session.id])
+	        .then(result => {
+	            console.log(
+	                '  Сессия в БД:',
+	                result.rows.length > 0 ? '✅ есть' : '❌ нет'
+	            );
+	        })
+	        .catch(err => {
+	            console.error('  Ошибка проверки БД:', err);
+	        });
+
+	    console.log('🔗 Редирект на:', FRONTEND_URL);
+
+	    res.redirect(FRONTEND_URL);
+	});
     }
 );
 
